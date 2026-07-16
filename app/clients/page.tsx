@@ -94,7 +94,6 @@ type Risk = "High" | "Medium" | "Low";
 const RISK_OPTIONS = ["All", "High", "Medium", "Low"] as const;
 type RiskOption = typeof RISK_OPTIONS[number];
 
-// Helper function defined BEFORE the component
 function activeEngagementsForClient(engagements: EngagementRow[], clientId: string) {
   return engagements.filter((engagement) => engagement.client_id === clientId).map((engagement) => engagement.id);
 }
@@ -110,7 +109,7 @@ function normalizeRisk(value: string | null): Risk {
   return "Low";
 }
 
-export default function Page() {
+export default function ClientsPage() {
   const [query, setQuery] = useState("");
   const [filterRisk, setFilterRisk] = useState<"All" | Risk>("All");
   const [open, setOpen] = useState(false);

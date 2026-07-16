@@ -1,33 +1,36 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
-import { ShieldCheck, ArrowLeft } from "lucide-react";
-import { toast } from "sonner";
+import DashboardShell from "../../../components/layout/dashboard-shell";
+import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/card";
+import { Button } from "../../../components/ui/button";
+import { Badge } from "../../../components/ui/badge";
+import { ArrowLeft, Mail, Phone, MapPin, FileText } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
-
-function formatDate(value?: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleDateString("en-IN");
-}
 
 type ClientRow = {
   id: string;
   firm_id: string | null;
   name: string;
+  type: "individual" | "business" | string | null;
   email: string | null;
   phone: string | null;
   pan: string | null;
   gstin: string | null;
   address: string | null;
-  risk_level: string | null;
+  risk_level: "low" | "medium" | "high" | string | null;
+  created_at: string | null;
+};
+
+type ContactRow = {
+  id: string;
+  client_id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  designation: string | null;
   created_at: string | null;
 };
 
@@ -38,561 +41,228 @@ type EngagementRow = {
   title: string;
   type: string;
   status: string;
-  risk: string | null;
   due_date: string | null;
   priority: string | null;
   created_at: string | null;
 };
 
-type ChecklistItemRow = {
-  id: string;
-  engagement_id: string;
-  title: string;
-  description: string | null;
-  status: string;
-  requested_at: string | null;
-  due_date: string | null;
-  assigned_staff: string | null;
-  created_at: string | null;
-};
-
-type DocumentRow = {
-  id: string;
-  engagement_id: string;
-  title: string | null;
-  file_name: string;
-  file_type: string | null;
-  status: string;
-  uploaded_by: string | null;
-  uploaded_at: string | null;
-  created_at: string | null;
-};
-
-type InvoiceRow = {
-  id: string;
-  firm_id: string | null;
-  client_id: string;
-  engagement_id: string | null;
-  invoice_number: string;
-  amount: number;
-  status: string;
-  due_date: string | null;
-  payment_link: string | null;
-  created_at: string | null;
-};
-
-const firm = {
-  name: "CA Compliance Vault",
-};
-
-const formatINR = (amount: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
-
-export default function ClientPortalPage() {
-  const searchParams = useSearchParams();
-  const clientId = searchParams.get('client_id') || searchParams.get('id') || "";
+export default function ClientDetailPage() {
+  const params = useParams();
+  const clientId = params.clientId as string;
   
   const [client, setClient] = useState<ClientRow | null>(null);
+  const [contacts, setContacts] = useState<ContactRow[]>([]);
   const [engagements, setEngagements] = useState<EngagementRow[]>([]);
-  const [checklistItems, setChecklistItems] = useState<ChecklistItemRow[]>([]);
-  const [documents, setDocuments] = useState<DocumentRow[]>([]);
-  const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
-  const [comment, setComment] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
-      if (!clientId) {
-        setError("No client ID provided. Please use a valid client portal link.");
-        setLoading(false);
-        return;
-      }
-
       setLoading(true);
       setError(null);
 
       try {
-        // Fetch client by ID
-        const clientRes = await supabase
-          .from("clients")
-          .select("*")
-          .eq("id", clientId)
-          .maybeSingle();
-        
-        if (clientRes.error) throw clientRes.error;
-        
-        if (!clientRes.data) {
-          setError(`Client not found. Please check your portal link and try again.`);
-          setLoading(false);
-          return;
-        }
-
-        const clientData = clientRes.data as ClientRow;
-        setClient(clientData);
-
-        // Fetch engagements for this client
-        const engagementsRes = await supabase
-          .from("engagements")
-          .select("*")
-          .eq("client_id", clientData.id);
-        
-        if (engagementsRes.error) throw engagementsRes.error;
-        const engagementRows = (engagementsRes.data ?? []) as EngagementRow[];
-
-        let checklistRows: ChecklistItemRow[] = [];
-        if (engagementRows.length > 0) {
-          const engagementIds = engagementRows.map((e) => e.id);
-          const checklistRes = await supabase
-            .from("checklist_items")
-            .select("*")
-            .in("engagement_id", engagementIds);
-          
-          if (checklistRes.error) throw checklistRes.error;
-          checklistRows = (checklistRes.data ?? []) as ChecklistItemRow[];
-        }
-
-        const [documentsRes, invoicesRes] = await Promise.all([
-          supabase.from("documents").select("*").eq("client_id", clientData.id),
-          supabase.from("invoices").select("*").eq("client_id", clientData.id),
+        const [clientRes, contactsRes, engagementsRes] = await Promise.all([
+          supabase.from("clients").select("*").eq("id", clientId).single(),
+          supabase.from("contacts").select("*").eq("client_id", clientId),
+          supabase.from("engagements").select("*").eq("client_id", clientId),
         ]);
-        
-        if (documentsRes.error) throw documentsRes.error;
-        if (invoicesRes.error) throw invoicesRes.error;
 
-        setEngagements(engagementRows);
-        setChecklistItems(checklistRows);
-        setDocuments((documentsRes.data ?? []) as DocumentRow[]);
-        setInvoices((invoicesRes.data ?? []) as InvoiceRow[]);
+        if (clientRes.error) throw clientRes.error;
+        if (contactsRes.error) throw contactsRes.error;
+        if (engagementsRes.error) throw engagementsRes.error;
+
+        setClient(clientRes.data);
+        setContacts(contactsRes.data ?? []);
+        setEngagements(engagementsRes.data ?? []);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Unable to load client portal data. Please try again later.");
+        setError(err instanceof Error ? err.message : "Failed to load client details");
+      } finally {
         setLoading(false);
-        return;
       }
-
-      setLoading(false);
     };
 
     void load();
   }, [clientId]);
 
-  const activeEngagement = useMemo<EngagementRow | undefined>(() => {
-    return engagements.find((e) => e.status === "Waiting for Client" || e.status === "In Review") || engagements[0];
-  }, [engagements]);
-
-  const checklist = useMemo(
-    () => (activeEngagement ? checklistItems.filter((item) => item.engagement_id === activeEngagement.id) : []),
-    [activeEngagement, checklistItems]
-  );
-
-  const pendingDocs = useMemo(
-    () => checklist.filter((c) => c.status === "Pending" || c.status === "Requested"),
-    [checklist]
-  );
-
-  const approvalItems = useMemo(
-    () => checklist.filter((c) => c.status === "Uploaded"),
-    [checklist]
-  );
-
-  const documentsForEngagement = useMemo(
-    () => (activeEngagement ? documents.filter((doc) => doc.engagement_id === activeEngagement.id) : []),
-    [activeEngagement, documents]
-  );
-
-  const progress = useMemo(() => {
-    if (!activeEngagement) return 0;
-    const completedItems = checklist.filter(c => c.status === "Approved" || c.status === "Verified").length;
-    const totalItems = checklist.length;
-    return totalItems > 0 ? Math.min(100, Math.round((completedItems / totalItems) * 100)) : 0;
-  }, [activeEngagement, checklist]);
-
-  const unpaidInvoice = useMemo(
-    () => invoices.find((inv) => inv.engagement_id === activeEngagement?.id && inv.status !== "Paid"),
-    [activeEngagement, invoices]
-  );
-
-  const handleUploadClick = (itemId?: string) => {
-    toast.success(`Document upload initiated for ${itemId ? `item ${itemId}` : 'document'}. Storage integration coming soon.`);
-  };
-
-  const handleApprove = (itemId?: string) => {
-    toast.success(`Approval ${itemId ? `for item ${itemId}` : ''} recorded. Workflow integration coming soon.`);
-  };
-
-  const handlePayNow = (link?: string) => {
-    if (link) {
-      window.open(link, "_blank");
-    } else {
-      toast.error("Payment link is not configured yet. Please contact your CA firm.");
-    }
-  };
-
-  const handleSendComment = async () => {
-    if (!comment.trim()) {
-      toast.error("Please enter a message before sending.");
-      return;
-    }
-    
-    const FIRM_ID = "11111111-1111-1111-1111-111111111111";
-    
-    try {
-      const { data: inserted, error } = await supabase
-        .from("notes")
-        .insert([{
-          firm_id: FIRM_ID,
-          client_id: clientId,
-          engagement_id: activeEngagement?.id ?? null,
-          body: comment.trim(),
-          created_by: null
-        }])
-        .select()
-        .single();
-      
-      if (error) {
-        toast.error(error.message || "Failed to send message. Please try again.");
-        return;
-      }
-
-      await supabase
-        .from("audit_logs")
-        .insert([{
-          firm_id: FIRM_ID,
-          client_id: clientId,
-          engagement_id: activeEngagement?.id ?? null,
-          action: "note_added",
-          metadata: { note_id: inserted.id },
-          created_by: null
-        }]);
-      
-      setComment("");
-      toast.success("Message sent successfully to your CA firm.");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to send message";
-      toast.error(message);
-    }
-  };
-
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 px-4 py-8">
-        <div className="mx-auto max-w-4xl space-y-6">
-          <div className="rounded-2xl bg-white p-6 shadow-sm">
-            <div className="h-6 w-40 rounded bg-slate-200 animate-pulse" />
-            <div className="mt-3 h-4 w-64 rounded bg-slate-200 animate-pulse" />
-          </div>
-          <div className="grid gap-6 md:grid-cols-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="rounded-2xl bg-white p-6 shadow-sm">
-                <div className="h-4 w-32 rounded bg-slate-200 animate-pulse mb-4" />
-                <div className="space-y-3">
-                  <div className="h-3 w-full rounded bg-slate-200 animate-pulse" />
-                  <div className="h-3 w-2/3 rounded bg-slate-200 animate-pulse" />
-                </div>
-              </div>
+      <DashboardShell>
+        <div className="space-y-6">
+          <div className="h-8 w-48 rounded bg-slate-200 animate-pulse" />
+          <div className="grid gap-4 md:grid-cols-2">
+            {[1, 2].map((i) => (
+              <Card key={i}>
+                <CardContent className="p-6">
+                  <div className="h-4 w-32 rounded bg-slate-200 animate-pulse mb-2" />
+                  <div className="h-4 w-24 rounded bg-slate-200 animate-pulse" />
+                </CardContent>
+              </Card>
             ))}
           </div>
         </div>
-      </div>
+      </DashboardShell>
     );
   }
 
-  if (error) {
+  if (error || !client) {
     return (
-      <div className="min-h-screen bg-slate-50 px-4 py-8">
+      <DashboardShell>
         <div className="mx-auto max-w-3xl py-24">
           <Card>
             <CardHeader>
-              <CardTitle className="text-red-600">Unable to Load Client Portal</CardTitle>
+              <CardTitle>Client not found</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-slate-600 mb-4">{error}</p>
-              <Link href="/">
+              <p className="text-sm text-slate-600 mb-4">{error ?? "This client does not exist or has been removed."}</p>
+              <Link href="/clients">
                 <Button variant="outline" className="inline-flex items-center gap-2">
                   <ArrowLeft className="h-4 w-4" />
-                  Return to Home
+                  Back to Clients
                 </Button>
               </Link>
             </CardContent>
           </Card>
         </div>
-      </div>
+      </DashboardShell>
     );
   }
 
-  if (!client) {
-    return (
-      <div className="min-h-screen bg-slate-50 px-4 py-8">
-        <div className="mx-auto max-w-3xl py-24">
-          <Card>
-            <CardHeader>
-              <CardTitle>Client Not Found</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-slate-600 mb-4">
-                We couldn&apos;t find your client information. Please check your portal link or contact your CA firm for assistance.
-              </p>
-              <Link href="/">
-                <Button variant="outline" className="inline-flex items-center gap-2">
-                  <ArrowLeft className="h-4 w-4" />
-                  Return to Home
-                </Button>
-              </Link>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
-  }
+  const primaryContact = contacts[0];
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-8">
-      <nav className="mx-auto flex max-w-4xl items-center justify-between gap-4 rounded-2xl bg-white px-4 py-3 shadow-sm">
-        <div className="flex items-center gap-3">
-          <ShieldCheck className="h-6 w-6 text-slate-700" />
-          <div>
-            <div className="font-semibold">CA Compliance Vault</div>
-            <div className="text-sm text-slate-600">{firm.name}</div>
+    <DashboardShell>
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Link href="/clients">
+              <Button variant="outline" size="sm" className="inline-flex items-center gap-2">
+                <ArrowLeft className="h-4 w-4" />
+                Back
+              </Button>
+            </Link>
+            <div>
+              <h1 className="text-2xl font-semibold">{client.name}</h1>
+              <p className="text-sm text-slate-600">
+                {client.type ? client.type.charAt(0).toUpperCase() + client.type.slice(1) : "N/A"} • Client since {client.created_at ? new Date(client.created_at).toLocaleDateString("en-IN") : "N/A"}
+              </p>
+            </div>
           </div>
+          <Badge 
+            variant={
+              client.risk_level === "high" ? "destructive" : 
+              client.risk_level === "medium" ? "secondary" : 
+              "default"
+            }
+            className="text-sm px-4 py-2"
+          >
+            {client.risk_level ? client.risk_level.charAt(0).toUpperCase() + client.risk_level.slice(1) : "Low"} Risk
+          </Badge>
         </div>
-        <div className="flex items-center gap-3">
-          <Badge variant="secondary">Secure Client Portal</Badge>
-          <Link href="/">
-            <Button variant="outline" size="sm" className="inline-flex items-center gap-2">
-              <ArrowLeft className="h-4 w-4" />
-              Back to Home
-            </Button>
-          </Link>
-        </div>
-      </nav>
 
-      <main className="mx-auto mt-6 max-w-4xl space-y-6">
-        <section className="rounded-2xl bg-white p-6 shadow-sm">
-          <h1 className="text-2xl font-semibold">Welcome, {client.name}</h1>
-          <p className="mt-2 text-sm text-slate-600">
-            Here is what your CA firm needs from you to complete your current work.
-          </p>
-          {client.email && (
-            <p className="mt-1 text-sm text-slate-500">
-              Account: {client.email}
-            </p>
-          )}
-        </section>
-
-        <section className="grid gap-6 md:grid-cols-3">
+        {/* Client Details & Contact */}
+        <div className="grid gap-4 md:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle>Engagement Progress</CardTitle>
+              <CardTitle>Client Information</CardTitle>
             </CardHeader>
-            <CardContent>
-              {activeEngagement ? (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="font-medium text-slate-900">{activeEngagement.title}</div>
-                      <div className="text-sm text-slate-600">
-                        Due {activeEngagement.due_date ? formatDate(activeEngagement.due_date) : "—"}
-                      </div>
-                    </div>
-                    <Badge variant={activeEngagement.status === "Overdue" ? "destructive" : "secondary"}>
-                      {activeEngagement.status}
-                    </Badge>
-                  </div>
-
-                  <div className="text-sm text-slate-600">Progress: {progress}%</div>
-                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
-                    <div 
-                      className="h-full rounded-full bg-slate-900 transition-all duration-300" 
-                      style={{ width: `${progress}%` }} 
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm text-slate-600">Pending documents</div>
-                    <div className="font-medium">{pendingDocs.length}</div>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm text-slate-600">Approvals needed</div>
-                    <div className="font-medium">{approvalItems.length}</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-slate-600">
-                  No active engagements found. Please contact your CA firm for updates.
+            <CardContent className="space-y-4">
+              {client.email && (
+                <div className="flex items-center gap-2">
+                  <Mail className="h-4 w-4 text-slate-500" />
+                  <span className="text-sm">{client.email}</span>
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Pending Documents</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {pendingDocs.length === 0 ? (
-                <div className="text-sm text-slate-600">
-                  No pending documents. Great job!
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {pendingDocs.map((item) => (
-                    <div key={item.id} className="rounded-md border px-3 py-3">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="font-medium">{item.title}</div>
-                          <div className="text-sm text-slate-600">
-                            {item.requested_at ? `Requested on ${formatDate(item.requested_at)}` : "Requested"}
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-2">
-                          <Badge variant={item.status === "Requested" ? "destructive" : "outline"}>
-                            {item.status}
-                          </Badge>
-                          <Button 
-                            size="sm" 
-                            variant="outline" 
-                            onClick={() => handleUploadClick(item.id)}
-                          >
-                            Upload
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="mt-2 text-sm text-slate-500">
-                        Due {item.due_date ? formatDate(item.due_date) : "—"}
-                      </div>
-                    </div>
-                  ))}
+              {client.phone && (
+                <div className="flex items-center gap-2">
+                  <Phone className="h-4 w-4 text-slate-500" />
+                  <span className="text-sm">{client.phone}</span>
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Uploaded Documents</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {documentsForEngagement.length === 0 ? (
-                <div className="text-sm text-slate-600">
-                  No documents uploaded yet.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {documentsForEngagement.map((doc) => (
-                    <div key={doc.id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                      <div>
-                        <div className="font-medium">{doc.file_name}</div>
-                        <div className="text-sm text-slate-600">
-                          Uploaded {doc.uploaded_at ? formatDate(doc.uploaded_at) : "—"}
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <Badge 
-                          variant={
-                            doc.status === "Verified" ? "secondary" : 
-                            doc.status === "Rejected" ? "destructive" : 
-                            "outline"
-                          }
-                        >
-                          {doc.status}
-                        </Badge>
-                        <div className="text-sm text-slate-500">{doc.title ?? "—"}</div>
-                      </div>
-                    </div>
-                  ))}
+              {client.address && (
+                <div className="flex items-start gap-2">
+                  <MapPin className="h-4 w-4 text-slate-500 mt-0.5" />
+                  <span className="text-sm">{client.address}</span>
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </section>
-
-        <section className="grid gap-6 md:grid-cols-3">
-          <Card>
-            <CardHeader>
-              <CardTitle>Approvals Needed</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {approvalItems.length === 0 ? (
-                <div className="text-sm text-slate-600">
-                  No pending approvals at this time.
+              <div className="grid grid-cols-2 gap-4 pt-2 border-t">
+                <div>
+                  <div className="text-xs font-medium text-slate-500 uppercase">PAN</div>
+                  <div className="text-sm mt-1">{client.pan ?? "—"}</div>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {approvalItems.map((item) => (
-                    <div key={item.id} className="rounded-md border px-3 py-3 flex items-center justify-between">
-                      <div>
-                        <div className="font-medium">{item.title}</div>
-                        <div className="text-sm text-slate-600">
-                          {item.due_date ? `Due ${formatDate(item.due_date)}` : "—"}
-                        </div>
-                      </div>
-                      <Button onClick={() => handleApprove(item.id)}>Approve</Button>
-                    </div>
-                  ))}
+                <div>
+                  <div className="text-xs font-medium text-slate-500 uppercase">GSTIN</div>
+                  <div className="text-sm mt-1">{client.gstin ?? "—"}</div>
                 </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Invoice / Payment</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {unpaidInvoice ? (
-                <div className="space-y-3">
-                  <div className="font-medium">{unpaidInvoice.invoice_number}</div>
-                  <div className="text-sm text-slate-600">
-                    Amount: {formatINR(unpaidInvoice.amount)}
-                  </div>
-                  <div className="text-sm text-slate-600">
-                    Due {unpaidInvoice.due_date ? formatDate(unpaidInvoice.due_date) : "—"}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={unpaidInvoice.status === "Overdue" ? "destructive" : "outline"}>
-                      {unpaidInvoice.status}
-                    </Badge>
-                    <Button onClick={() => handlePayNow(unpaidInvoice.payment_link ?? undefined)}>
-                      Pay Now
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-slate-600">
-                  No unpaid invoices. All caught up!
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Need Help?</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="text-sm text-slate-600">
-                  If you&apos;re unsure which document to upload or have questions about your engagement, leave a message for your CA firm.
-                </div>
-                <Textarea 
-                  value={comment} 
-                  onChange={(e) => setComment(e.target.value)} 
-                  placeholder="Type your message here..." 
-                  rows={3}
-                />
-                <Button 
-                  onClick={handleSendComment}
-                  disabled={!comment.trim()}
-                  className="w-full"
-                >
-                  Send Message
-                </Button>
               </div>
             </CardContent>
           </Card>
-        </section>
-      </main>
-    </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Primary Contact</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {primaryContact ? (
+                <>
+                  <div>
+                    <div className="text-sm font-medium">{primaryContact.name}</div>
+                    {primaryContact.designation && (
+                      <div className="text-sm text-slate-500">{primaryContact.designation}</div>
+                    )}
+                  </div>
+                  {primaryContact.email && (
+                    <div className="flex items-center gap-2">
+                      <Mail className="h-4 w-4 text-slate-500" />
+                      <span className="text-sm">{primaryContact.email}</span>
+                    </div>
+                  )}
+                  {primaryContact.phone && (
+                    <div className="flex items-center gap-2">
+                      <Phone className="h-4 w-4 text-slate-500" />
+                      <span className="text-sm">{primaryContact.phone}</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-slate-500">No contact person added yet.</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Engagements */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Active Engagements</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {engagements.length === 0 ? (
+              <div className="text-center py-8">
+                <FileText className="h-8 w-8 text-slate-400 mx-auto mb-2" />
+                <p className="text-sm text-slate-600">No engagements yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {engagements.map((engagement) => (
+                  <div key={engagement.id} className="flex items-center justify-between rounded-md border px-4 py-3">
+                    <div>
+                      <div className="font-medium">{engagement.title}</div>
+                      <div className="text-sm text-slate-600">
+                        {engagement.type} • Due {engagement.due_date ? new Date(engagement.due_date).toLocaleDateString("en-IN") : "—"}
+                      </div>
+                    </div>
+                    <Badge variant={engagement.status === "Overdue" ? "destructive" : "secondary"}>
+                      {engagement.status}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </DashboardShell>
   );
 }
