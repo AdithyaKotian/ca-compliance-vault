@@ -1,58 +1,166 @@
 "use client"
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import DashboardShell from "../../../components/layout/dashboard-shell";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
+import { Textarea } from "../../../components/ui/textarea";
 import { Badge } from "../../../components/ui/badge";
 import { ClipboardCopy } from "lucide-react";
 import { toast } from "sonner";
-import {
-  getEngagementById,
-  getClientById,
-  getEngagementChecklist,
-  getEngagementDocuments,
-  getEngagementProgress,
-  getClientInvoices,
-  notes,
-  auditLogs,
-} from "../../../lib/mock-data";
+import { supabase } from "@/lib/supabase/client";
 
-type EngagementDetailPageProps = {
-  params: {
-    engagementId: string;
-  };
+type EngagementRow = {
+  id: string;
+  firm_id: string | null;
+  client_id: string;
+  title: string;
+  type: string;
+  status: string;
+  risk: string | null;
+  due_date: string | null;
+  priority: string | null;
+  created_at: string | null;
+};
+
+type ClientRow = {
+  id: string;
+  firm_id: string | null;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  pan: string | null;
+  gstin: string | null;
+  address: string | null;
+  risk_level: string | null;
+  created_at: string | null;
+};
+
+type ChecklistItemRow = {
+  id: string;
+  engagement_id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  requested_at: string | null;
+  due_date: string | null;
+  assigned_staff: string | null;
+  created_at: string | null;
+};
+
+type DocumentRow = {
+  id: string;
+  engagement_id: string;
+  title: string | null;
+  file_name: string;
+  file_type: string | null;
+  status: string;
+  uploaded_by: string | null;
+  uploaded_at: string | null;
+  created_at: string | null;
+};
+
+type InvoiceRow = {
+  id: string;
+  firm_id: string | null;
+  client_id: string;
+  engagement_id: string | null;
+  invoice_number: string;
+  amount: number;
+  status: string;
+  due_date: string | null;
+  payment_link: string | null;
+  created_at: string | null;
+};
+
+type NoteRow = {
+  id: string;
+  firm_id: string | null;
+  client_id: string;
+  engagement_id: string | null;
+  body: string;
+  created_by: string | null;
+  created_at: string | null;
+};
+
+type AuditLogRow = {
+  id: string;
+  firm_id: string | null;
+  client_id: string | null;
+  engagement_id: string | null;
+  action: string;
+  metadata: Record<string, unknown> | null;
+  created_by: string | null;
+  created_at: string | null;
 };
 
 function fmtINR(amount: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
 }
 
-function getDaysUntil(dueDate: string) {
-  const now = new Date();
-  const due = new Date(dueDate);
-  const diff = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-  return diff;
+function parseDate(value: string | null): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function getRiskVariant(risk: string) {
+function formatDate(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("en-IN");
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("en-IN");
+}
+
+function getRiskVariant(risk: string | null) {
   if (risk === "High") return "destructive";
   if (risk === "Medium") return "secondary";
   return "default";
 }
 
-function CopyReminderButton({ clientName, engagementTitle, pendingItems }: { clientName: string; engagementTitle: string; pendingItems: string[] }) {
+function getEngagementProgress(checklist: ChecklistItemRow[]) {
+  if (checklist.length === 0) return 0;
+  const completed = checklist.filter((item) => {
+    const status = item.status.toLowerCase();
+    return status === "approved" || status === "uploaded";
+  }).length;
+  return Math.min(100, Math.round((completed / checklist.length) * 100));
+}
+
+function metadataSummary(metadata: Record<string, unknown> | null): string {
+  if (!metadata) return "No metadata";
+  try {
+    const text = JSON.stringify(metadata);
+    return text.length > 120 ? `${text.slice(0, 120)}…` : text;
+  } catch {
+    return "Metadata unavailable";
+  }
+}
+
+function CopyReminderButton({ clientId, clientName, engagementTitle, pendingItems }: { clientId?: string | null; clientName: string; engagementTitle: string; pendingItems: string[] }) {
   const message = useMemo(() => {
     if (pendingItems.length === 0) {
       return `Hi ${clientName}, your ${engagementTitle} is in progress. No new document uploads are pending right now.`;
     }
-
     return `Hi ${clientName}, your ${engagementTitle} is pending. Please upload the following documents: ${pendingItems.join(", ")}. You can share them through your CA Compliance Vault portal.`;
   }, [clientName, engagementTitle, pendingItems]);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(message);
+    try {
+      const FIRM_ID = "11111111-1111-1111-1111-111111111111";
+      await supabase.from("reminders").insert([{ firm_id: FIRM_ID, client_id: clientId ?? null, engagement_id: undefined, message, channel: "manual", status: "sent" }]);
+    } catch {
+      // ignore logging errors
+    }
     toast.success("Reminder message copied");
   };
 
@@ -64,10 +172,123 @@ function CopyReminderButton({ clientName, engagementTitle, pendingItems }: { cli
   );
 }
 
-export default function EngagementDetailPage({ params }: EngagementDetailPageProps) {
-  const engagement = getEngagementById(params.engagementId);
+export default function EngagementDetailPage() {
+  const params = useParams();
+  const engagementId = String(params?.engagementId ?? "");
 
-  if (!engagement) {
+  const [engagement, setEngagement] = useState<EngagementRow | null>(null);
+  const [client, setClient] = useState<ClientRow | null>(null);
+  const [checklist, setChecklist] = useState<ChecklistItemRow[]>([]);
+  const [documents, setDocuments] = useState<DocumentRow[]>([]);
+  const [invoice, setInvoice] = useState<InvoiceRow | null>(null);
+  const [notes, setNotes] = useState<NoteRow[]>([]);
+  const [timeline, setTimeline] = useState<AuditLogRow[]>([]);
+  const [newNote, setNewNote] = useState("");
+  const [loading, setLoading] = useState(engagementId !== "");
+  const [error, setError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(engagementId === "");
+
+  useEffect(() => {
+    if (!engagementId) {
+      return;
+    }
+
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      setNotFound(false);
+
+      const engagementRes = await supabase.from("engagements").select("*").eq("id", engagementId).maybeSingle();
+      if (engagementRes.error) {
+        setError(engagementRes.error.message);
+        setLoading(false);
+        return;
+      }
+
+      const engagementRow = engagementRes.data as EngagementRow | null;
+      if (!engagementRow) {
+        setNotFound(true);
+        setLoading(false);
+        return;
+      }
+
+      const [clientRes, checklistRes, documentsRes, invoicesRes, notesRes, timelineRes] = await Promise.all([
+        supabase.from("clients").select("*").eq("id", engagementRow.client_id).maybeSingle(),
+        supabase.from("checklist_items").select("*").eq("engagement_id", engagementId),
+        supabase.from("documents").select("*").eq("engagement_id", engagementId),
+        supabase.from("invoices").select("*").eq("engagement_id", engagementId),
+        supabase.from("notes").select("*").eq("engagement_id", engagementId),
+        supabase.from("audit_logs").select("*").eq("engagement_id", engagementId),
+      ]);
+
+      const fetchError = clientRes.error || checklistRes.error || documentsRes.error || invoicesRes.error || notesRes.error || timelineRes.error;
+      if (fetchError) {
+        setError(fetchError.message);
+        setLoading(false);
+        return;
+      }
+
+      setEngagement(engagementRow);
+      setClient(clientRes.data as ClientRow | null);
+      setChecklist((checklistRes.data ?? []) as ChecklistItemRow[]);
+      setDocuments((documentsRes.data ?? []) as DocumentRow[]);
+      setInvoice(((invoicesRes.data ?? []) as InvoiceRow[])[0] ?? null);
+      setNotes((notesRes.data ?? []) as NoteRow[]);
+      setTimeline((timelineRes.data ?? []) as AuditLogRow[]);
+      setLoading(false);
+    };
+
+    void load();
+  }, [engagementId]);
+
+  const pendingItems = useMemo(
+    () => checklist
+      .filter((item) => {
+        const status = item.status.toLowerCase();
+        return status === "pending" || status === "requested";
+      })
+      .map((item) => item.title),
+    [checklist]
+  );
+
+  const progress = useMemo(() => getEngagementProgress(checklist), [checklist]);
+  const dueDays = engagement ? Math.max(0, Math.ceil((parseDate(engagement.due_date)?.getTime() ?? 0 - new Date().getTime()) / (1000 * 60 * 60 * 24))) : 0;
+
+  if (loading) {
+    return (
+      <DashboardShell>
+        <div className="mx-auto max-w-3xl py-24">
+          <Card>
+            <CardHeader>
+              <CardTitle>Loading engagement…</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-slate-600">Fetching engagement details from Supabase.</p>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardShell>
+    );
+  }
+
+  if (error) {
+    return (
+      <DashboardShell>
+        <div className="mx-auto max-w-3xl py-24">
+          <Card>
+            <CardHeader>
+              <CardTitle>Unable to load engagement</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-slate-600">{error}</p>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardShell>
+    );
+  }
+
+  if (notFound || !engagement) {
     return (
       <DashboardShell>
         <div className="mx-auto max-w-3xl py-24">
@@ -89,16 +310,6 @@ export default function EngagementDetailPage({ params }: EngagementDetailPagePro
     );
   }
 
-  const client = getClientById(engagement.clientId);
-  const checklist = getEngagementChecklist(engagement.id);
-  const documents = getEngagementDocuments(engagement.id);
-  const progress = getEngagementProgress(engagement.id);
-  const invoice = getClientInvoices(engagement.clientId).find((inv) => inv.engagementId === engagement.id);
-  const engagementNotes = notes.filter((note) => note.engagementId === engagement.id);
-  const engagementTimeline = auditLogs.filter((audit) => audit.entityType === "Engagement" && audit.entityId === engagement.id);
-  const pendingItems = checklist.filter((item) => item.status === "Pending" || item.status === "Requested").map((item) => item.title);
-  const dueDays = getDaysUntil(engagement.dueDate);
-
   return (
     <DashboardShell>
       <div className="space-y-6">
@@ -117,14 +328,18 @@ export default function EngagementDetailPage({ params }: EngagementDetailPagePro
               <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
                 <span>{engagement.type}</span>
                 <Badge variant={engagement.status === "Completed" ? "secondary" : engagement.status === "Overdue" ? "destructive" : "default"}>{engagement.status}</Badge>
-                <Badge variant={getRiskVariant(engagement.risk)}>{engagement.risk}</Badge>
-                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1">Due {new Date(engagement.dueDate).toLocaleDateString("en-IN")}</span>
+                <Badge variant={getRiskVariant(engagement.risk)}>{engagement.risk ?? "Unknown"}</Badge>
+                {engagement.due_date ? (
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1">Due {formatDate(engagement.due_date)}</span>
+                ) : (
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1">No due date</span>
+                )}
               </div>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <CopyReminderButton clientName={client?.name ?? "Client"} engagementTitle={engagement.title} pendingItems={pendingItems} />
+            <CopyReminderButton clientId={client?.id} clientName={client?.name ?? "Client"} engagementTitle={engagement.title} pendingItems={pendingItems} />
             <Button variant="outline" size="sm">Request Documents</Button>
           </div>
         </header>
@@ -156,8 +371,8 @@ export default function EngagementDetailPage({ params }: EngagementDetailPagePro
               <CardTitle>Days Until Due</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-semibold">{dueDays >= 0 ? dueDays : 0}</div>
-              <div className="text-sm text-slate-500">{dueDays < 0 ? "Overdue" : "Days remaining"}</div>
+              <div className="text-3xl font-semibold">{dueDays}</div>
+              <div className="text-sm text-slate-500">{engagement.due_date ? "Days remaining" : "No due date"}</div>
             </CardContent>
           </Card>
 
@@ -168,7 +383,7 @@ export default function EngagementDetailPage({ params }: EngagementDetailPagePro
             <CardContent>
               {invoice ? (
                 <div className="space-y-2">
-                  <div className="text-lg font-semibold">{fmtINR(invoice.amountINR)}</div>
+                  <div className="text-lg font-semibold">{fmtINR(invoice.amount)}</div>
                   <Badge variant={invoice.status === "Overdue" ? "destructive" : invoice.status === "Paid" ? "secondary" : "default"}>{invoice.status}</Badge>
                 </div>
               ) : (
@@ -193,14 +408,14 @@ export default function EngagementDetailPage({ params }: EngagementDetailPagePro
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <div className="font-medium">{item.title}</div>
-                          <div className="text-sm text-slate-500">{item.requestedAt ? `Requested ${new Date(item.requestedAt).toLocaleDateString("en-IN")}` : "No request date"}</div>
+                          <div className="text-sm text-slate-500">{item.requested_at ? `Requested ${formatDate(item.requested_at)}` : "No request date"}</div>
                         </div>
                         <Badge variant={item.status === "Rejected" ? "destructive" : item.status === "Approved" ? "secondary" : "outline"}>{item.status}</Badge>
                       </div>
                       <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-slate-600">
                         <Badge variant="outline">{importance}</Badge>
-                        <span>{item.dueDate ? `Due ${new Date(item.dueDate).toLocaleDateString("en-IN")}` : "No due date"}</span>
-                        {item.assignee && <span>Assigned to {item.assignee}</span>}
+                        <span>{item.due_date ? `Due ${formatDate(item.due_date)}` : "No due date"}</span>
+                        {item.assigned_staff && <span>Assigned to {item.assigned_staff}</span>}
                       </div>
                       <div className="mt-3">
                         <Button size="sm" variant={item.status === "Uploaded" ? "default" : "outline"}>{actionLabel}</Button>
@@ -221,24 +436,21 @@ export default function EngagementDetailPage({ params }: EngagementDetailPagePro
                 <div className="text-sm text-slate-500">No documents uploaded yet.</div>
               ) : (
                 <div className="space-y-3">
-                  {documents.map((doc) => {
-                    const relatedItem = checklist.find((item) => doc.title.toLowerCase().includes(item.title.toLowerCase().split(" ")[0]));
-                    return (
-                      <div key={doc.id} className="rounded-md border px-3 py-3">
-                        <div className="flex flex-col gap-2">
-                          <div className="font-medium">{doc.fileName}</div>
-                          <div className="text-sm text-slate-600">Uploaded by {doc.uploadedBy ?? "Unknown"} on {doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleDateString("en-IN") : "Unknown"}</div>
-                          <div className="flex flex-wrap items-center gap-2 text-sm">
-                            <Badge variant={doc.status === "Verified" ? "secondary" : doc.status === "Rejected" ? "destructive" : "default"}>{doc.status}</Badge>
-                            <span>{relatedItem ? `Checklist: ${relatedItem.title}` : "No related checklist"}</span>
-                          </div>
-                        </div>
-                        <div className="mt-3">
-                          <Button size="sm" variant="outline">View File</Button>
+                  {documents.map((doc) => (
+                    <div key={doc.id} className="rounded-md border px-3 py-3">
+                      <div className="flex flex-col gap-2">
+                        <div className="font-medium">{doc.file_name}</div>
+                        <div className="text-sm text-slate-600">Uploaded by {doc.uploaded_by ?? "Unknown"} on {formatDate(doc.uploaded_at)}</div>
+                        <div className="flex flex-wrap items-center gap-2 text-sm">
+                          <Badge variant={doc.status === "Verified" ? "secondary" : doc.status === "Rejected" ? "destructive" : "default"}>{doc.status}</Badge>
+                          <span>{doc.file_type ?? "Document"}</span>
                         </div>
                       </div>
-                    );
-                  })}
+                      <div className="mt-3">
+                        <Button size="sm" variant="outline" onClick={() => toast.success("File preview will be connected in Supabase Storage step.")}>View File</Button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>
@@ -253,27 +465,27 @@ export default function EngagementDetailPage({ params }: EngagementDetailPagePro
             <CardContent>
               {invoice ? (
                 <div className="space-y-3">
-                  <div className="font-medium">{invoice.number}</div>
-                  <div className="text-sm text-slate-600">Amount: {fmtINR(invoice.amountINR)}</div>
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <Badge variant={invoice.status === "Overdue" ? "destructive" : invoice.status === "Paid" ? "secondary" : "default"}>{invoice.status}</Badge>
-                    <span>Due {new Date(invoice.dueDate).toLocaleDateString("en-IN")}</span>
+                  <div className="font-medium">{invoice.invoice_number}</div>
+                  <div className="text-sm text-slate-600">Amount: {fmtINR(invoice.amount)}</div>
+                  <div className="text-sm text-slate-600">Due {formatDate(invoice.due_date)}</div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant={invoice.status.toLowerCase() === "overdue" ? "destructive" : invoice.status.toLowerCase() === "paid" ? "secondary" : "default"}>{invoice.status}</Badge>
+                    {invoice.payment_link ? (
+                      <>
+                        <a href={invoice.payment_link} target="_blank" rel="noreferrer">
+                          <Button size="sm">Open Payment</Button>
+                        </a>
+                        <Button size="sm" variant="outline" onClick={async () => {
+                          await navigator.clipboard.writeText(invoice.payment_link ?? "");
+                          toast.success("Payment link copied");
+                        }}>
+                          Copy Payment Link
+                        </Button>
+                      </>
+                    ) : (
+                      <div className="text-sm text-slate-500">No payment link available.</div>
+                    )}
                   </div>
-                  {invoice.paymentLink ? (
-                    <div className="flex flex-wrap gap-2">
-                      <a href={invoice.paymentLink} target="_blank" rel="noreferrer">
-                        <Button size="sm">Open Payment</Button>
-                      </a>
-                      <Button size="sm" variant="outline" onClick={async () => {
-                        await navigator.clipboard.writeText(invoice.paymentLink ?? "");
-                        toast.success("Payment link copied");
-                      }}>
-                        Copy Payment Link
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-slate-500">No payment link available.</div>
-                  )}
                 </div>
               ) : (
                 <div className="text-sm text-slate-500">No invoice attached to this engagement yet.</div>
@@ -286,18 +498,55 @@ export default function EngagementDetailPage({ params }: EngagementDetailPagePro
               <CardTitle>Notes</CardTitle>
             </CardHeader>
             <CardContent>
-              {engagementNotes.length === 0 ? (
-                <div className="text-sm text-slate-500">No notes yet.</div>
-              ) : (
-                <div className="space-y-3">
-                  {engagementNotes.map((noteItem) => (
-                    <div key={noteItem.id} className="rounded-md border p-3">
-                      <div className="text-sm text-slate-800">{noteItem.content}</div>
-                      <div className="mt-2 text-xs text-slate-500">{noteItem.author} • {new Date(noteItem.createdAt).toLocaleString()}</div>
-                    </div>
-                  ))}
+              <div className="space-y-3">
+                {notes.length === 0 ? (
+                  <div className="text-sm text-slate-500">No notes yet.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {notes.map((noteItem) => (
+                      <div key={noteItem.id} className="rounded-md border p-3">
+                        <div className="text-sm text-slate-800">{noteItem.body}</div>
+                        <div className="mt-2 text-xs text-slate-500">{noteItem.created_by ?? "Firm staff"} • {formatDateTime(noteItem.created_at)}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="mt-4">
+                  <label className="block text-sm font-medium text-slate-700">Add note</label>
+                  <Textarea value={newNote} onChange={(e) => setNewNote(e.target.value)} placeholder="Write a comment or internal note" />
+                  <div className="mt-2">
+                    <Button onClick={async () => {
+                      if (!newNote.trim()) {
+                        toast.error("Note cannot be empty");
+                        return;
+                      }
+                      const FIRM_ID = "11111111-1111-1111-1111-111111111111";
+                      try {
+                        const { data: inserted, error: insertErr } = await supabase.from("notes").insert([{ firm_id: FIRM_ID, client_id: client?.id ?? "", engagement_id: engagement.id, body: newNote.trim(), created_by: null }]).select().single();
+                        if (insertErr) {
+                          toast.error(insertErr.message || "Failed to add note");
+                          return;
+                        }
+
+                        await supabase.from("audit_logs").insert([{ firm_id: FIRM_ID, client_id: client?.id ?? null, engagement_id: engagement.id, action: "note_added", metadata: { note_id: inserted.id }, created_by: null }]);
+
+                        const { data: refreshedNotes } = await supabase.from("notes").select("*").eq("engagement_id", engagement.id);
+                        setNotes(refreshedNotes ?? []);
+
+                        const { data: refreshedTimeline } = await supabase.from("audit_logs").select("*").eq("engagement_id", engagement.id);
+                        setTimeline(refreshedTimeline ?? []);
+
+                        setNewNote("");
+                        toast.success("Note added");
+                      } catch (err) {
+                        const message = err instanceof Error ? err.message : "Note creation error";
+                        toast.error(message);
+                      }
+                    }}>Add Note</Button>
+                  </div>
                 </div>
-              )}
+              </div>
             </CardContent>
           </Card>
         </section>
@@ -308,15 +557,15 @@ export default function EngagementDetailPage({ params }: EngagementDetailPagePro
               <CardTitle>Timeline</CardTitle>
             </CardHeader>
             <CardContent>
-              {engagementTimeline.length === 0 ? (
+              {timeline.length === 0 ? (
                 <div className="text-sm text-slate-500">No activity yet.</div>
               ) : (
                 <div className="space-y-3">
-                  {engagementTimeline.map((event) => (
+                  {timeline.map((event) => (
                     <div key={event.id} className="flex flex-col gap-2 rounded-md border px-3 py-3">
                       <div className="font-medium">{event.action}</div>
-                      <div className="text-sm text-slate-500">{new Date(event.timestamp).toLocaleString()}</div>
-                      {event.details && <div className="text-sm text-slate-600">{event.details}</div>}
+                      <div className="text-sm text-slate-500">{formatDateTime(event.created_at)}</div>
+                      <div className="text-sm text-slate-600">{metadataSummary(event.metadata)}</div>
                     </div>
                   ))}
                 </div>

@@ -7,6 +7,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "../../components/ui/card";
 import { toast } from "sonner";
+import { supabase } from "@/lib/supabase/client";
 
 type Role = "admin" | "client";
 
@@ -16,20 +17,42 @@ export default function LoginPage() {
 	const [password, setPassword] = useState("");
 	const [role, setRole] = useState<Role>("admin");
 
-	const handleLogin = () => {
+
+	const handleLogin = async () => {
 		if (!email.trim() || !password.trim()) {
 			toast.error("Please enter email and password");
 			return;
 		}
 
-		if (role === "admin") {
-			toast.success("Demo firm login successful");
-			router.push("/dashboard");
-			return;
-		}
+		try {
+			const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+			if (error) {
+				toast.error(error.message || "Login failed");
+				return;
+			}
 
-		toast.success("Demo client login successful");
-		router.push("/client-portal");
+			const user = data?.user ?? null;
+			if (!user) {
+				toast.error("Unable to sign in");
+				return;
+			}
+
+			// Try to load profile to determine role
+			const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
+			const profileRole = (profile as { role?: string } | null)?.role;
+
+			if (profileRole === "client" || role === "client") {
+				toast.success("Signed in — redirecting to client portal");
+				router.push("/client-portal");
+				return;
+			}
+
+			toast.success("Signed in — redirecting to dashboard");
+			router.push("/dashboard");
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : "Login error";
+			toast.error(message);
+		}
 	};
 
 	return (

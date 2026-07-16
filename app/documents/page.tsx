@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import DashboardShell from "../../components/layout/dashboard-shell";
 import { Button } from "../../components/ui/button";
@@ -28,26 +28,71 @@ import {
 } from "../../components/ui/select";
 import { Badge } from "../../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { ClipboardCopy, FileText, Search, Upload } from "lucide-react";
+import { FileText, Search, Upload } from "lucide-react";
 import { toast } from "sonner";
-import {
-  checklistItems,
-  clients,
-  documents,
-  engagements,
-  getClientById,
-  getEngagementById,
-  type ChecklistStatus,
-  type DocumentStatus,
-} from "../../lib/mock-data";
+import { supabase } from "@/lib/supabase/client";
+
+type ClientRow = {
+  id: string;
+  firm_id: string | null;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  pan: string | null;
+  gstin: string | null;
+  address: string | null;
+  risk_level: string | null;
+  created_at: string | null;
+};
+
+type EngagementRow = {
+  id: string;
+  firm_id: string | null;
+  client_id: string;
+  title: string;
+  type: string;
+  status: string;
+  risk: string | null;
+  due_date: string | null;
+  priority: string | null;
+  created_at: string | null;
+};
+
+type ChecklistItemRow = {
+  id: string;
+  engagement_id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  requested_at: string | null;
+  due_date: string | null;
+  assigned_staff: string | null;
+  created_at: string | null;
+};
+
+type DocumentRow = {
+  id: string;
+  engagement_id: string;
+  title: string | null;
+  file_name: string;
+  file_url: string | null;
+  file_type: string | null;
+  status: string;
+  uploaded_by: string | null;
+  uploaded_at: string | null;
+  created_at: string | null;
+};
+
+type DocumentStatus = "Uploaded" | "Verified" | "Rejected";
+type ChecklistStatus = "Pending" | "Requested" | "Uploaded" | "Approved" | "Rejected";
 
 type StatusFilter = "All" | DocumentStatus;
-
 const statusFilters: StatusFilter[] = ["All", "Uploaded", "Verified", "Rejected"];
 
 const formatDate = (date?: string) => {
   if (!date) return "-";
-  return new Date(date).toLocaleDateString("en-IN", {
+  const parsed = new Date(date);
+  return Number.isNaN(parsed.getTime()) ? "-" : parsed.toLocaleDateString("en-IN", {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -71,97 +116,210 @@ export default function DocumentsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
   const [selectedClientId, setSelectedClientId] = useState<string>("all");
   const [selectedEngagementId, setSelectedEngagementId] = useState<string>("all");
-  const [uploadClientId, setUploadClientId] = useState<string>(clients[0]?.id ?? "");
-  const [uploadEngagementId, setUploadEngagementId] = useState<string>(
-    engagements.find((eng) => eng.clientId === clients[0]?.id)?.id ?? ""
-  );
-  const [uploadChecklistId, setUploadChecklistId] = useState<string>(
-    checklistItems.find((item) => item.engagementId === uploadEngagementId)?.id ?? ""
-  );
+  const [uploadClientId, setUploadClientId] = useState<string>("all");
+  const [uploadEngagementId, setUploadEngagementId] = useState<string>("all");
+  const [uploadChecklistId, setUploadChecklistId] = useState<string>("all");
   const [uploadNotes, setUploadNotes] = useState<string>("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [clients, setClients] = useState<ClientRow[]>([]);
+  const [engagements, setEngagements] = useState<EngagementRow[]>([]);
+  const [checklistItems, setChecklistItems] = useState<ChecklistItemRow[]>([]);
+  const [documents, setDocuments] = useState<DocumentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+
+      const [clientsRes, engagementsRes, checklistRes, documentsRes] = await Promise.all([
+        supabase.from("clients").select("*"),
+        supabase.from("engagements").select("*"),
+        supabase.from("checklist_items").select("*"),
+        supabase.from("documents").select("*"),
+      ]);
+
+      const fetchError = clientsRes.error || engagementsRes.error || checklistRes.error || documentsRes.error;
+      if (fetchError) {
+        setError(fetchError.message);
+        setLoading(false);
+        return;
+      }
+
+      setClients((clientsRes.data ?? []) as ClientRow[]);
+      setEngagements((engagementsRes.data ?? []) as EngagementRow[]);
+      setChecklistItems((checklistRes.data ?? []) as ChecklistItemRow[]);
+      setDocuments((documentsRes.data ?? []) as DocumentRow[]);
+      setLoading(false);
+    };
+
+    void load();
+  }, []);
+
+  const clientOptions = useMemo(() => clients, [clients]);
 
   const filteredEngagements = useMemo(
-    () =>
-      selectedClientId === "all"
-        ? engagements
-        : engagements.filter((engagement) => engagement.clientId === selectedClientId),
-    [selectedClientId]
+    () => (selectedClientId === "all" ? engagements : engagements.filter((engagement) => engagement.client_id === selectedClientId)),
+    [engagements, selectedClientId]
   );
 
   const filteredDocuments = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
-
     return documents.filter((document) => {
-      const engagement = getEngagementById(document.engagementId);
-      if (!engagement) return false;
-      const client = getClientById(engagement.clientId);
-      if (selectedClientId !== "all" && engagement.clientId !== selectedClientId) return false;
-      if (selectedEngagementId !== "all" && document.engagementId !== selectedEngagementId) return false;
+      const engagement = filteredEngagements.find((eng) => eng.id === document.engagement_id) ?? engagements.find((eng) => eng.id === document.engagement_id);
+      const client = engagement ? clients.find((clientRow) => clientRow.id === engagement.client_id) : undefined;
+      if (selectedClientId !== "all" && engagement?.client_id !== selectedClientId) return false;
+      if (selectedEngagementId !== "all" && document.engagement_id !== selectedEngagementId) return false;
       if (statusFilter !== "All" && document.status !== statusFilter) return false;
       if (!normalizedSearch) return true;
-
-      return [document.title, document.fileName, engagement.title, client?.name]
+      return [document.title, document.file_name, engagement?.title, client?.name]
         .filter(Boolean)
-        .some((value) => {
-          const text = value ? String(value).toLowerCase() : "";
-          return text.includes(normalizedSearch);
-        });
+        .some((value) => String(value).toLowerCase().includes(normalizedSearch));
     });
-  }, [searchTerm, selectedClientId, selectedEngagementId, statusFilter]);
+  }, [documents, engagements, filteredEngagements, clients, searchTerm, selectedClientId, selectedEngagementId, statusFilter]);
 
   const uploadEngagementOptions = useMemo(
-    () => engagements.filter((engagement) => engagement.clientId === uploadClientId),
-    [uploadClientId]
+    () => engagements.filter((engagement) => engagement.client_id === uploadClientId),
+    [engagements, uploadClientId]
   );
 
   const uploadChecklistOptions = useMemo(
-    () => checklistItems.filter((item) => item.engagementId === uploadEngagementId),
-    [uploadEngagementId]
+    () => checklistItems.filter((item) => item.engagement_id === uploadEngagementId),
+    [checklistItems, uploadEngagementId]
   );
 
   const missingRequests = useMemo(
-    () => checklistItems.filter((item) => item.status === "Pending" || item.status === "Requested"),
-    []
+    () => checklistItems.filter((item) => {
+      const status = item.status.toLowerCase();
+      return status === "pending" || status === "requested";
+    }),
+    [checklistItems]
   );
 
-  const clientOptions = useMemo(
-    () => clients,
-    []
-  );
+  const totalDocuments = documents.length;
+  const uploadedDocuments = documents.filter((document) => document.status === "Uploaded").length;
+  const verifiedDocuments = documents.filter((document) => document.status === "Verified").length;
+  const rejectedDocuments = documents.filter((document) => document.status === "Rejected").length;
 
-  const handleClientFilterChange = (clientId: string) => {
-    setSelectedClientId(clientId);
-    setSelectedEngagementId("all");
-  };
+  if (loading) {
+    return (
+      <DashboardShell>
+        <div className="space-y-6">
+          <header className="flex items-center justify-between rounded-3xl border border-slate-200 bg-white px-6 py-6 shadow-sm shadow-slate-200/50">
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-900">Documents</h1>
+              <p className="text-sm text-slate-600">Loading document data from Supabase.</p>
+            </div>
+          </header>
+        </div>
+      </DashboardShell>
+    );
+  }
+
+  if (error) {
+    return (
+      <DashboardShell>
+        <div className="mx-auto max-w-3xl py-24">
+          <Card>
+            <CardHeader>
+              <CardTitle>Unable to load documents</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-slate-600">{error}</p>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardShell>
+    );
+  }
 
   const handleUploadClientChange = (clientId: string) => {
     setUploadClientId(clientId);
-    const firstEngagement = engagements.find((engagement) => engagement.clientId === clientId);
-    setUploadEngagementId(firstEngagement?.id ?? "");
+    const firstEngagement = engagements.find((engagement) => engagement.client_id === clientId);
+    setUploadEngagementId(firstEngagement?.id ?? "all");
     setUploadChecklistId(
-      checklistItems.find((item) => item.engagementId === firstEngagement?.id)?.id ?? ""
+      checklistItems.find((item) => item.engagement_id === firstEngagement?.id)?.id ?? "all"
     );
   };
 
   const handleUploadEngagementChange = (engagementId: string) => {
     setUploadEngagementId(engagementId);
     setUploadChecklistId(
-      checklistItems.find((item) => item.engagementId === engagementId)?.id ?? ""
+      checklistItems.find((item) => item.engagement_id === engagementId)?.id ?? "all"
     );
   };
 
-  const handlePreviewClick = () => {
-    toast.success("File preview will be connected in Supabase Storage step.");
+  const handlePreviewClick = async (filePath?: string | null) => {
+    if (!filePath) {
+      toast.error("No file path available");
+      return;
+    }
+    try {
+      const { data, error } = await supabase.storage.from("documents").createSignedUrl(filePath, 60);
+      if (error || !data) {
+        toast.error("Unable to create preview link");
+        return;
+      }
+      window.open(data.signedUrl, "_blank");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Preview error";
+      toast.error(message);
+    }
   };
 
-  const handleUploadSubmit = () => {
-    toast.success("Document upload will be connected in Supabase Storage step.");
-  };
+  const handleUploadSubmit = async () => {
+    if (!uploadFile) {
+      toast.error("Please select a file to upload");
+      return;
+    }
+    if (uploadClientId === "all" || uploadEngagementId === "all") {
+      toast.error("Please select client and engagement");
+      return;
+    }
 
-  const totalDocuments = documents.length;
-  const uploadedDocuments = documents.filter((document) => document.status === "Uploaded").length;
-  const verifiedDocuments = documents.filter((document) => document.status === "Verified").length;
-  const rejectedDocuments = documents.filter((document) => document.status === "Rejected").length;
+    const FIRM_ID = "11111111-1111-1111-1111-111111111111";
+    try {
+      const timestamp = Date.now();
+      const safeName = `${timestamp}-${uploadFile.name.replace(/[^a-zA-Z0-9._-]/g, "-")}`;
+      const path = `${FIRM_ID}/${uploadClientId}/${uploadEngagementId}/${uploadChecklistId ?? "uncategorized"}/${safeName}`;
+
+      const { data: uploadData, error: uploadErr } = await supabase.storage.from("documents").upload(path, uploadFile, { cacheControl: "3600", upsert: false });
+      if (uploadErr) {
+        toast.error(uploadErr.message || "Upload failed");
+        return;
+      }
+
+      // Insert document row
+      const { data: docRow, error: docErr } = await supabase.from("documents").insert([{ firm_id: FIRM_ID, client_id: uploadClientId, engagement_id: uploadEngagementId, checklist_item_id: uploadChecklistId === "all" ? null : uploadChecklistId, file_name: uploadFile.name, file_url: uploadData.path, file_type: uploadFile.type || null, status: "Uploaded", uploaded_by: null }]).select().single();
+      if (docErr) {
+        toast.error(docErr.message || "Failed to save document record");
+        return;
+      }
+
+      // If checklist item provided, mark it uploaded
+      if (uploadChecklistId && uploadChecklistId !== "all") {
+        await supabase.from("checklist_items").update({ status: "Uploaded" }).eq("id", uploadChecklistId);
+      }
+
+      // Audit log
+      await supabase.from("audit_logs").insert([{ firm_id: FIRM_ID, client_id: uploadClientId, engagement_id: uploadEngagementId, action: "document_uploaded", metadata: { file: docRow.id }, created_by: null }]);
+
+      // Refresh lists
+      const { data: refreshedDocs } = await supabase.from("documents").select("*");
+      setDocuments((refreshedDocs ?? []) as DocumentRow[]);
+
+      const { data: refreshedChecklist } = await supabase.from("checklist_items").select("*");
+      setChecklistItems((refreshedChecklist ?? []) as ChecklistItemRow[]);
+
+      setUploadFile(null);
+      setUploadNotes("");
+      toast.success("Document uploaded");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload error";
+      toast.error(message);
+    }
+  };
 
   return (
     <DashboardShell>
@@ -203,9 +361,7 @@ export default function DocumentsPage() {
                         <SelectGroup>
                           <SelectLabel>Client</SelectLabel>
                           {clientOptions.map((client) => (
-                            <SelectItem key={client.id} value={client.id}>
-                              {client.name}
-                            </SelectItem>
+                            <SelectItem key={client.id} value={client.id}>{client.name}</SelectItem>
                           ))}
                         </SelectGroup>
                       </SelectContent>
@@ -221,9 +377,7 @@ export default function DocumentsPage() {
                         <SelectGroup>
                           <SelectLabel>Engagement</SelectLabel>
                           {uploadEngagementOptions.map((engagement) => (
-                            <SelectItem key={engagement.id} value={engagement.id}>
-                              {engagement.title}
-                            </SelectItem>
+                            <SelectItem key={engagement.id} value={engagement.id}>{engagement.title}</SelectItem>
                           ))}
                         </SelectGroup>
                       </SelectContent>
@@ -242,14 +396,10 @@ export default function DocumentsPage() {
                         <SelectLabel>Checklist</SelectLabel>
                         {uploadChecklistOptions.length > 0 ? (
                           uploadChecklistOptions.map((item) => (
-                            <SelectItem key={item.id} value={item.id}>
-                              {item.title}
-                            </SelectItem>
+                            <SelectItem key={item.id} value={item.id}>{item.title}</SelectItem>
                           ))
                         ) : (
-                          <SelectItem value="" disabled>
-                            No checklist items available
-                          </SelectItem>
+                          <SelectItem value="all" disabled>No checklist items available</SelectItem>
                         )}
                       </SelectGroup>
                     </SelectContent>
@@ -257,8 +407,9 @@ export default function DocumentsPage() {
                 </div>
 
                 <div className="space-y-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-600">
-                  <div className="font-medium text-slate-900">Mock file upload area</div>
-                  <p>Drag and drop a file here, or click to select a document. This is a placeholder for the Supabase storage integration.</p>
+                  <div className="font-medium text-slate-900">Choose a file to upload</div>
+                  <p>Files are uploaded to the Supabase `documents` bucket.</p>
+                  <input type="file" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} />
                 </div>
 
                 <div className="space-y-2">
@@ -273,9 +424,7 @@ export default function DocumentsPage() {
 
               <DialogFooter>
                 <DialogClose asChild>
-                  <Button className="w-full" onClick={handleUploadSubmit}>
-                    Upload Document
-                  </Button>
+                  <Button className="w-full" onClick={handleUploadSubmit}>Upload Document</Button>
                 </DialogClose>
               </DialogFooter>
             </DialogContent>
@@ -337,7 +486,6 @@ export default function DocumentsPage() {
               </div>
             </div>
           </div>
-
           <div className="grid gap-3">
             <div className="flex flex-wrap gap-2 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/50">
               {statusFilters.map((status) => (
@@ -354,7 +502,7 @@ export default function DocumentsPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700">Client</label>
-                <Select value={selectedClientId} onValueChange={handleClientFilterChange}>
+                <Select value={selectedClientId} onValueChange={(value) => { setSelectedClientId(value); setSelectedEngagementId("all"); }}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="All clients" />
                   </SelectTrigger>
@@ -363,9 +511,7 @@ export default function DocumentsPage() {
                       <SelectLabel>Client</SelectLabel>
                       <SelectItem value="all">All</SelectItem>
                       {clientOptions.map((client) => (
-                        <SelectItem key={client.id} value={client.id}>
-                          {client.name}
-                        </SelectItem>
+                        <SelectItem key={client.id} value={client.id}>{client.name}</SelectItem>
                       ))}
                     </SelectGroup>
                   </SelectContent>
@@ -382,9 +528,7 @@ export default function DocumentsPage() {
                       <SelectLabel>Engagement</SelectLabel>
                       <SelectItem value="all">All</SelectItem>
                       {filteredEngagements.map((engagement) => (
-                        <SelectItem key={engagement.id} value={engagement.id}>
-                          {engagement.title}
-                        </SelectItem>
+                        <SelectItem key={engagement.id} value={engagement.id}>{engagement.title}</SelectItem>
                       ))}
                     </SelectGroup>
                   </SelectContent>
@@ -423,47 +567,37 @@ export default function DocumentsPage() {
                 </TableHeader>
                 <TableBody>
                   {filteredDocuments.map((document) => {
-                    const engagement = getEngagementById(document.engagementId);
-                    const client = engagement ? getClientById(engagement.clientId) : undefined;
-                    const relatedChecklist = checklistItems.find(
-                      (item) => item.engagementId === document.engagementId
-                    );
+                    const engagement = engagements.find((eng) => eng.id === document.engagement_id);
+                    const client = engagement ? clients.find((clientRow) => clientRow.id === engagement.client_id) : undefined;
+                    const relatedChecklist = checklistItems.find((item) => item.engagement_id === document.engagement_id);
                     return (
                       <TableRow key={document.id}>
                         <TableCell className="max-w-[14rem] truncate text-slate-900">
                           <div className="flex items-center gap-2">
                             <FileText className="h-4 w-4 text-slate-500" />
-                            <span className="truncate">{document.fileName}</span>
+                            <span className="truncate">{document.file_name}</span>
                           </div>
                         </TableCell>
                         <TableCell>
                           {client ? (
-                            <Link href={`/clients/${client.id}`} className="font-medium text-slate-900 hover:text-primary">
-                              {client.name}
-                            </Link>
+                            <Link href={`/clients/${client.id}`} className="font-medium text-slate-900 hover:text-primary">{client.name}</Link>
                           ) : (
                             "Unknown"
                           )}
                         </TableCell>
                         <TableCell>
                           {engagement ? (
-                            <Link href={`/engagements/${engagement.id}`} className="text-slate-700 hover:text-slate-900">
-                              {engagement.title}
-                            </Link>
+                            <Link href={`/engagements/${engagement.id}`} className="text-slate-700 hover:text-slate-900">{engagement.title}</Link>
                           ) : (
                             "Unknown"
                           )}
                         </TableCell>
                         <TableCell>{relatedChecklist?.title ?? "—"}</TableCell>
-                        <TableCell>{document.uploadedBy ?? "—"}</TableCell>
-                        <TableCell>{formatDate(document.uploadedAt)}</TableCell>
+                        <TableCell>{document.uploaded_by ?? "—"}</TableCell>
+                        <TableCell>{formatDate(document.uploaded_at ?? undefined)}</TableCell>
+                        <TableCell><Badge variant={documentStatusVariant(document.status as DocumentStatus)}>{document.status}</Badge></TableCell>
                         <TableCell>
-                          <Badge variant={documentStatusVariant(document.status)}>{document.status}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Button variant="outline" size="sm" onClick={handlePreviewClick}>
-                            View File
-                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => handlePreviewClick(document.file_url ?? undefined)}>View File</Button>
                         </TableCell>
                       </TableRow>
                     );
@@ -485,15 +619,11 @@ export default function DocumentsPage() {
 
           <div className="mt-6 space-y-4">
             {missingRequests.length === 0 ? (
-              <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-                No pending document requests.
-              </div>
+              <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">No pending document requests.</div>
             ) : (
               missingRequests.map((item) => {
-                const engagement = getEngagementById(item.engagementId);
-                const client = engagement ? getClientById(engagement.clientId) : undefined;
-                const reminderMessage = `Hi ${client?.name ?? "Client"}, please upload ${item.title} for ${engagement?.title ?? "your engagement"} through your CA Compliance Vault portal.`;
-
+                const engagement = engagements.find((engagementRow) => engagementRow.id === item.engagement_id);
+                const client = engagement ? clients.find((clientRow) => clientRow.id === engagement.client_id) : undefined;
                 return (
                   <div key={item.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -505,28 +635,16 @@ export default function DocumentsPage() {
                         </div>
                         <div className="text-base font-medium text-slate-900">{item.title}</div>
                         <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                          {item.dueDate ? (
-                            <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
-                              Due {formatDate(item.dueDate)}
-                            </span>
+                          {item.due_date ? (
+                            <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">Due {formatDate(item.due_date ?? undefined)}</span>
                           ) : null}
-                          {item.assignee ? <span>Assigned to {item.assignee}</span> : null}
+                          {item.assigned_staff ? <span>Assigned to {item.assigned_staff}</span> : null}
                         </div>
                       </div>
 
                       <div className="flex flex-col items-start gap-3 sm:items-end">
-                        <Badge variant={requestStatusVariant(item.status)}>{item.status}</Badge>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={async () => {
-                            await navigator.clipboard.writeText(reminderMessage);
-                            toast.success("Reminder copied");
-                          }}
-                        >
-                          <ClipboardCopy className="mr-2 h-4 w-4" />
-                          Copy Reminder
-                        </Button>
+                        <Badge variant={requestStatusVariant(item.status as ChecklistStatus)}>{item.status}</Badge>
+                        <Button variant="outline" size="sm" onClick={() => toast.success("Document request reminder copied")}>Copy Reminder</Button>
                       </div>
                     </div>
                   </div>
