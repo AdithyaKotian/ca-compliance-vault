@@ -1,432 +1,761 @@
-"use client"
+"use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import React, { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
-import { ShieldCheck, ArrowLeft } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  ShieldCheck,
+  Upload,
+  CheckCircle2,
+  CreditCard,
+  Send,
+  FileText,
+  AlertCircle,
+  LogOut,
+  Loader2,
+  Briefcase,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase/client";
+import { useProfile } from "@/components/providers/profile-provider";
+import PortalDocumentUpload from "@/components/portal/document-upload";
 
-function formatDate(value?: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleDateString("en-IN");
-}
-
-type ClientRow = {
+type ClientData = {
   id: string;
-  firm_id: string | null;
   name: string;
   email: string | null;
   phone: string | null;
   pan: string | null;
   gstin: string | null;
   address: string | null;
-  risk_level: string | null;
-  created_at: string | null;
 };
 
-type EngagementRow = {
+type EngagementData = {
   id: string;
-  firm_id: string | null;
-  client_id: string;
   title: string;
   type: string;
   status: string;
-  risk: string | null;
   due_date: string | null;
   priority: string | null;
-  created_at: string | null;
 };
 
-type ChecklistItemRow = {
+type ChecklistItemData = {
   id: string;
   engagement_id: string;
   title: string;
   description: string | null;
   status: string;
-  requested_at: string | null;
   due_date: string | null;
-  assigned_staff: string | null;
-  created_at: string | null;
+  required: boolean | null;
 };
 
-type DocumentRow = {
+type DocumentData = {
   id: string;
-  engagement_id: string;
+  engagement_id: string | null;
   title: string | null;
   file_name: string;
-  file_type: string | null;
+  file_path: string | null;
+  file_url: string | null;
+  file_size: number | null;
   status: string;
-  uploaded_by: string | null;
   uploaded_at: string | null;
-  created_at: string | null;
 };
 
-type InvoiceRow = {
+type InvoiceData = {
   id: string;
-  firm_id: string | null;
-  client_id: string;
-  engagement_id: string | null;
   invoice_number: string;
   amount: number;
+  tax: number | null;
+  total_amount: number | null;
   status: string;
   due_date: string | null;
   payment_link: string | null;
-  created_at: string | null;
 };
 
-const firm = {
-  name: "CA Compliance Vault",
+type NoteData = {
+  id: string;
+  body: string;
+  created_at: string;
+  created_by?: string | null;
 };
 
-const formatINR = (amount: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
+const FIRM_ID = "11111111-1111-1111-1111-111111111111";
+
+function fmtINR(amount?: number | null) {
+  if (amount === undefined || amount === null) return "₹0";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function formatDate(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
 
 export default function ClientPortalPage() {
-  // FIXED: Use a real UUID from your database
-  const clientId = "22222222-2222-2222-2222-222222222201";
-  
-  const [client, setClient] = useState<ClientRow | null>(null);
-  const [engagements, setEngagements] = useState<EngagementRow[]>([]);
-  const [checklistItems, setChecklistItems] = useState<ChecklistItemRow[]>([]);
-  const [documents, setDocuments] = useState<DocumentRow[]>([]);
-  const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
-  const [comment, setComment] = useState("");
+  const router = useRouter();
+  const { loading: profileLoading } = useProfile();
+
+  const [client, setClient] = useState<ClientData | null>(null);
+  const [engagements, setEngagements] = useState<EngagementData[]>([]);
+  const [checklistItems, setChecklistItems] = useState<ChecklistItemData[]>([]);
+  const [documents, setDocuments] = useState<DocumentData[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceData[]>([]);
+  const [notes, setNotes] = useState<NoteData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const load = async () => {
+  // Upload dialog state
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [targetEngagementId, setTargetEngagementId] = useState<string | null>(null);
+  const [targetChecklistId, setTargetChecklistId] = useState<string | null>(null);
+  const [targetChecklistTitle, setTargetChecklistTitle] = useState<string | null>(null);
+
+  // Messaging state
+  const [newComment, setNewComment] = useState("");
+  const [isSendingComment, setIsSendingComment] = useState(false);
+
+  const loadPortalData = useCallback(async () => {
+    try {
       setLoading(true);
       setError(null);
 
-      try {
-        const clientRes = await supabase.from("clients").select("*").eq("id", clientId).maybeSingle();
-        if (clientRes.error) throw clientRes.error;
-        
-        if (!clientRes.data) {
-          setError("Client not found. Please check the client ID.");
-          setLoading(false);
-          return;
-        }
-        
-        const engagementsRes = await supabase.from("engagements").select("*").eq("client_id", clientId);
-        if (engagementsRes.error) throw engagementsRes.error;
-        const engagementRows = (engagementsRes.data ?? []) as EngagementRow[];
+      // Verify authenticated user
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-        let checklistRows: ChecklistItemRow[] = [];
-        if (engagementRows.length > 0) {
-          const engagementIds = engagementRows.map((e) => e.id);
-          const checklistRes = await supabase.from("checklist_items").select("*").in("engagement_id", engagementIds);
-          if (checklistRes.error) throw checklistRes.error;
-          checklistRows = (checklistRes.data ?? []) as ChecklistItemRow[];
-        }
+      if (!user) {
+        router.push("/login");
+        return;
+      }
 
-        const [documentsRes, invoicesRes] = await Promise.all([
-          supabase.from("documents").select("*").eq("client_id", clientId),
-          supabase.from("invoices").select("*").eq("client_id", clientId),
-        ]);
-        if (documentsRes.error) throw documentsRes.error;
-        if (invoicesRes.error) throw invoicesRes.error;
+      // Query profile to obtain client_id securely
+      const { data: userProfile } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .maybeSingle();
 
-        setClient(clientRes.data as ClientRow | null);
-        setEngagements(engagementRows);
-        setChecklistItems(checklistRows);
-        setDocuments((documentsRes.data ?? []) as DocumentRow[]);
-        setInvoices((invoicesRes.data ?? []) as InvoiceRow[]);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unable to load client portal data.");
+      let targetClientId = userProfile?.client_id;
+
+      // If user is firm admin previewing portal, resolve first available client
+      if (!targetClientId) {
+        const { data: firstClient } = await supabase
+          .from("clients")
+          .select("id")
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+
+        targetClientId = firstClient?.id;
+      }
+
+      if (!targetClientId) {
+        setError("No client account associated with this login.");
         setLoading(false);
         return;
       }
 
+      // Fetch all client data filtered strictly by targetClientId
+      const [clientRes, engRes, docRes, invRes, notesRes] = await Promise.all([
+        supabase.from("clients").select("*").eq("id", targetClientId).single(),
+        supabase.from("engagements").select("*").eq("client_id", targetClientId),
+        supabase.from("documents").select("*").eq("client_id", targetClientId),
+        supabase.from("invoices").select("*").eq("client_id", targetClientId),
+        supabase.from("notes").select("*").eq("client_id", targetClientId).order("created_at", { ascending: false }),
+      ]);
+
+      if (clientRes.error) throw clientRes.error;
+
+      setClient(clientRes.data);
+      setEngagements(engRes.data ?? []);
+      setDocuments(docRes.data ?? []);
+      setInvoices(invRes.data ?? []);
+      setNotes(notesRes.data ?? []);
+
+      // Fetch checklist items for client engagements
+      const engIds = (engRes.data ?? []).map((e) => e.id);
+      if (engIds.length > 0) {
+        const { data: items } = await supabase
+          .from("checklist_items")
+          .select("*")
+          .in("engagement_id", engIds);
+        setChecklistItems(items ?? []);
+      } else {
+        setChecklistItems([]);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load portal data");
+    } finally {
       setLoading(false);
-    };
-
-    void load();
-  }, []);
-
-  const activeEngagement = useMemo<EngagementRow | undefined>(() => {
-    return engagements.find((e) => e.status === "Waiting for Client" || e.status === "In Review") || engagements[0];
-  }, [engagements]);
-
-  const checklist = useMemo(
-    () => (activeEngagement ? checklistItems.filter((item) => item.engagement_id === activeEngagement.id) : []),
-    [activeEngagement, checklistItems]
-  );
-
-  const pendingDocs = useMemo(
-    () => checklist.filter((c) => c.status === "Pending" || c.status === "Requested"),
-    [checklist]
-  );
-
-  const approvalItems = useMemo(
-    () => checklist.filter((c) => c.status === "Uploaded"),
-    [checklist]
-  );
-
-  const documentsForEngagement = useMemo(
-    () => (activeEngagement ? documents.filter((doc) => doc.engagement_id === activeEngagement.id) : []),
-    [activeEngagement, documents]
-  );
-
-  const progress = useMemo(() => {
-    if (!activeEngagement) return 0;
-    return Math.min(100, Math.round((activeEngagement.priority ? 50 : 0) + 25));
-  }, [activeEngagement]);
-
-  const unpaidInvoice = useMemo(
-    () => invoices.find((inv) => inv.engagement_id === activeEngagement?.id && inv.status !== "Paid"),
-    [activeEngagement, invoices]
-  );
-
-  const handleUploadClick = () => toast.success("Document upload will be connected in Supabase Storage step.");
-  const handleApprove = () => toast.success("Approval workflow will be connected in Supabase step.");
-  const handlePayNow = (link?: string) => {
-    if (link) {
-      window.open(link, "_blank");
-    } else {
-      toast.error("Payment link is not attached yet.");
     }
+  }, [router]);
+
+  useEffect(() => {
+    void loadPortalData();
+  }, [loadPortalData]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push("/login");
+    router.refresh();
   };
-  const handleSendComment = async () => {
-    if (!comment.trim()) {
-      toast.error("Comment cannot be empty");
-      return;
-    }
-    const FIRM_ID = "11111111-1111-1111-1111-111111111111";
+
+  const handleSendComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newComment.trim() || !client) return;
+
+    setIsSendingComment(true);
     try {
-      const { data: inserted, error } = await supabase.from("notes").insert([{ firm_id: FIRM_ID, client_id: clientId, engagement_id: activeEngagement?.id ?? null, body: comment.trim(), created_by: null }]).select().single();
-      if (error) {
-        toast.error(error.message || "Failed to send comment");
+      const activeEngagement = engagements[0];
+      const { data: inserted, error: noteErr } = await supabase
+        .from("notes")
+        .insert([
+          {
+            firm_id: FIRM_ID,
+            client_id: client.id,
+            engagement_id: activeEngagement?.id || null,
+            body: newComment.trim(),
+          },
+        ])
+        .select()
+        .single();
+
+      if (noteErr) {
+        toast.error(noteErr.message || "Failed to send message");
         return;
       }
-      await supabase.from("audit_logs").insert([{ firm_id: FIRM_ID, client_id: clientId, engagement_id: activeEngagement?.id ?? null, action: "note_added", metadata: { note_id: inserted.id }, created_by: null }]);
-      setComment("");
-      toast.success("Comment sent");
+
+      await supabase.from("audit_logs").insert([
+        {
+          firm_id: FIRM_ID,
+          client_id: client.id,
+          engagement_id: activeEngagement?.id || null,
+          action: "client_message_sent",
+          metadata: { note_id: inserted.id },
+          created_by: null,
+        },
+      ]);
+
+      setNotes((prev) => [inserted, ...prev]);
+      setNewComment("");
+      toast.success("Message sent to your CA team");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Comment error";
-      toast.error(message);
+      toast.error(err instanceof Error ? err.message : "Error sending message");
+    } finally {
+      setIsSendingComment(false);
     }
   };
 
-  if (loading) {
+  // Metrics
+  const pendingDocsCount = checklistItems.filter((i) =>
+    ["pending", "requested"].includes(i.status.toLowerCase())
+  ).length;
+
+  const totalChecklistCount = checklistItems.length;
+  const approvedChecklistCount = checklistItems.filter((i) =>
+    ["approved", "verified", "uploaded"].includes(i.status.toLowerCase())
+  ).length;
+  const overallProgress =
+    totalChecklistCount > 0
+      ? Math.round((approvedChecklistCount / totalChecklistCount) * 100)
+      : 100;
+
+  const unpaidInvoices = invoices.filter((i) =>
+    ["sent", "overdue"].includes(i.status.toLowerCase())
+  );
+  const totalUnpaid = unpaidInvoices.reduce(
+    (sum, i) => sum + (i.total_amount ?? i.amount),
+    0
+  );
+
+  if (loading || profileLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 px-4 py-8">
-        <div className="mx-auto max-w-4xl space-y-6">
-          <div className="rounded-2xl bg-white p-6 shadow-sm">
-            <div className="h-6 w-40 rounded bg-slate-200 animate-pulse" />
-            <div className="mt-3 h-4 w-64 rounded bg-slate-200 animate-pulse" />
-          </div>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="text-center space-y-3">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto text-emerald-600" />
+          <p className="text-sm font-medium text-slate-600">
+            Accessing secure client vault...
+          </p>
         </div>
       </div>
     );
   }
 
-  if (error) {
+  if (error || !client) {
     return (
-      <div className="min-h-screen bg-slate-50 px-4 py-8">
-        <div className="mx-auto max-w-3xl py-24">
-          <Card>
-            <CardHeader>
-              <CardTitle>Unable to load client portal</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-slate-600">{error}</p>
-            </CardContent>
-          </Card>
-        </div>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <Card className="max-w-md w-full border-red-200 bg-white">
+          <CardHeader>
+            <CardTitle className="text-red-700">Client Portal Access</CardTitle>
+            <CardDescription>{error || "Client record not found."}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Button onClick={() => void loadPortalData()} className="w-full">
+              Retry
+            </Button>
+            <Button variant="outline" onClick={handleLogout} className="w-full">
+              Sign Out
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-8">
-      <nav className="mx-auto flex max-w-4xl items-center justify-between gap-4 rounded-2xl bg-white px-4 py-3 shadow-sm">
-        <div className="flex items-center gap-3">
-          <ShieldCheck className="h-6 w-6 text-slate-700" />
-          <div>
-            <div className="font-semibold">CA Compliance Vault</div>
-            <div className="text-sm text-slate-600">{firm.name}</div>
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+      {/* Top Header */}
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur-md">
+        <div className="max-w-6xl mx-auto flex h-16 items-center justify-between px-4 sm:px-6">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-600 text-white shadow-sm">
+              <ShieldCheck className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-slate-900">CA Compliance Vault</div>
+              <div className="text-[11px] text-slate-500">Client Portal • Kotian &amp; Co.</div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:block text-right">
+              <div className="text-xs font-semibold text-slate-800">{client.name}</div>
+              <div className="text-[10px] text-slate-500 font-mono">
+                {client.pan ? `PAN: ${client.pan}` : "Verified Account"}
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLogout}
+              className="text-xs text-slate-600 hover:text-red-600 hover:bg-red-50"
+            >
+              <LogOut className="mr-1.5 h-3.5 w-3.5" /> Sign Out
+            </Button>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <Badge variant="secondary">Secure Client Portal</Badge>
-          <Link href="/">
-            <Button variant="outline" size="sm" className="inline-flex items-center gap-2">
-              <ArrowLeft className="h-4 w-4" />
-              Back to Home
+      </header>
+
+      {/* Main Content Area */}
+      <main className="max-w-6xl w-full mx-auto p-4 sm:p-6 space-y-6 flex-1">
+        {/* Welcome Banner */}
+        <div className="rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white p-6 sm:p-8 shadow-md">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="space-y-1.5">
+              <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30 text-xs">
+                Active Compliance Vault
+              </Badge>
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+                Welcome, {client.name}
+              </h1>
+              <p className="text-sm text-slate-300">
+                Review your active filings, pending document requests, and invoices.
+              </p>
+            </div>
+
+            <Button
+              onClick={() => {
+                setTargetEngagementId(engagements[0]?.id || null);
+                setTargetChecklistId(null);
+                setTargetChecklistTitle(null);
+                setUploadOpen(true);
+              }}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold gap-2 shadow-sm"
+            >
+              <Upload className="h-4 w-4" /> Upload Document
             </Button>
-          </Link>
+          </div>
         </div>
-      </nav>
 
-      <main className="mx-auto mt-6 max-w-4xl space-y-6">
-        <section className="rounded-2xl bg-white p-6 shadow-sm">
-          <h1 className="text-2xl font-semibold">Welcome, {client?.name ?? "Client"}</h1>
-          <p className="mt-2 text-sm text-slate-600">Here is what your CA firm needs from you to complete your current work.</p>
-          <p className="mt-3 text-sm text-slate-500">Your documents and approvals are shared securely with your CA firm.</p>
-        </section>
-
-        <section className="grid gap-6 md:grid-cols-3">
-          <Card>
-            <CardHeader>
-              <CardTitle>Engagement Progress</CardTitle>
+        {/* Overview Stats */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Card className="border-slate-200">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                Document Checklist Progress
+              </CardTitle>
             </CardHeader>
-            <CardContent>
-              {activeEngagement ? (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="font-medium text-slate-900">{activeEngagement.title}</div>
-                      <div className="text-sm text-slate-600">Due {activeEngagement.due_date ? formatDate(activeEngagement.due_date) : "—"}</div>
-                    </div>
-                    <Badge variant={activeEngagement.status === "Overdue" ? "destructive" : "secondary"}>{activeEngagement.status}</Badge>
-                  </div>
-
-                  <div className="text-sm text-slate-600">Progress: {progress}%</div>
-                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
-                    <div className="h-full rounded-full bg-slate-900" style={{ width: `${progress}%` }} />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm text-slate-600">Pending documents</div>
-                    <div className="font-medium">{pendingDocs.length}</div>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm text-slate-600">Approvals needed</div>
-                    <div className="font-medium">{approvalItems.length}</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-slate-600">No active engagement found.</div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Pending Documents</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {pendingDocs.length === 0 ? (
-                <div className="text-sm text-slate-600">No pending documents.</div>
-              ) : (
-                <div className="space-y-3">
-                  {pendingDocs.map((item) => (
-                    <div key={item.id} className="rounded-md border px-3 py-3">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="font-medium">{item.title}</div>
-                          <div className="text-sm text-slate-600">{item.requested_at ? `Requested on ${formatDate(item.requested_at)}` : "Requested"}</div>
-                        </div>
-                        <div className="flex flex-col items-end gap-2">
-                          <Badge variant={item.status === "Requested" ? "destructive" : "outline"}>{item.status}</Badge>
-                          <Button size="sm" variant="outline" onClick={handleUploadClick}>Upload</Button>
-                        </div>
-                      </div>
-                      <div className="mt-2 text-sm text-slate-500">Due {item.due_date ? formatDate(item.due_date) : "—"}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Uploaded Documents</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {documentsForEngagement.length === 0 ? (
-                <div className="text-sm text-slate-600">No documents uploaded yet.</div>
-              ) : (
-                <div className="space-y-3">
-                  {documentsForEngagement.map((doc) => (
-                    <div key={doc.id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                      <div>
-                        <div className="font-medium">{doc.file_name}</div>
-                        <div className="text-sm text-slate-600">Uploaded {doc.uploaded_at ? formatDate(doc.uploaded_at) : "—"}</div>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <Badge variant={doc.status === "Verified" ? "secondary" : doc.status === "Rejected" ? "destructive" : "outline"}>{doc.status}</Badge>
-                        <div className="text-sm text-slate-500">{doc.title ?? "—"}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </section>
-
-        <section className="grid gap-6 md:grid-cols-3">
-          <Card>
-            <CardHeader>
-              <CardTitle>Approvals Needed</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {approvalItems.length === 0 ? (
-                <div className="space-y-3">
-                  <div className="text-sm text-slate-700">Confirm GST filing summary</div>
-                  <div className="mt-3"><Button onClick={handleApprove}>Approve</Button></div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {approvalItems.map((item) => (
-                    <div key={item.id} className="rounded-md border px-3 py-3 flex items-center justify-between">
-                      <div>
-                        <div className="font-medium">{item.title}</div>
-                        <div className="text-sm text-slate-600">{item.due_date ? `Due ${formatDate(item.due_date)}` : "—"}</div>
-                      </div>
-                      <Button onClick={handleApprove}>Approve</Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Invoice / Payment</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {unpaidInvoice ? (
-                <div className="space-y-3">
-                  <div className="font-medium">{unpaidInvoice.invoice_number}</div>
-                  <div className="text-sm text-slate-600">Amount: {formatINR(unpaidInvoice.amount)}</div>
-                  <div className="text-sm text-slate-600">Due {unpaidInvoice.due_date ? formatDate(unpaidInvoice.due_date ?? undefined) : "—"}</div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={unpaidInvoice.status === "Overdue" ? "destructive" : "outline"}>{unpaidInvoice.status}</Badge>
-                    <Button onClick={() => handlePayNow(unpaidInvoice.payment_link ?? undefined)}>Pay Now</Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-slate-600">No unpaid invoices.</div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Need help?</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="text-sm text-slate-600">If you are unsure which document to upload, leave a comment for your CA firm.</div>
-                <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Type your message..." />
-                <div><Button onClick={handleSendComment}>Send Comment</Button></div>
+            <CardContent className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-2xl font-bold text-slate-900">
+                  {overallProgress}%
+                </span>
+                <span className="text-xs text-slate-500">
+                  {approvedChecklistCount} of {totalChecklistCount} completed
+                </span>
               </div>
+              <Progress value={overallProgress} className="h-2" />
             </CardContent>
           </Card>
-        </section>
+
+          <Card className="border-slate-200">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                Pending Files Required
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-amber-600">
+                {pendingDocsCount}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Documents requested by your CA team
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                Outstanding Invoices
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-slate-900">
+                {fmtINR(totalUnpaid)}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                {unpaidInvoices.length} unpaid bill(s)
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Portal Tabs Navigation */}
+        <Tabs defaultValue="engagements" className="space-y-4">
+          <TabsList className="bg-white border border-slate-200 p-1">
+            <TabsTrigger value="engagements" className="text-xs font-medium gap-1.5">
+              <Briefcase className="h-3.5 w-3.5" /> Active Filings &amp; Checklist
+            </TabsTrigger>
+            <TabsTrigger value="documents" className="text-xs font-medium gap-1.5">
+              <FileText className="h-3.5 w-3.5" /> Uploaded Documents ({documents.length})
+            </TabsTrigger>
+            <TabsTrigger value="invoices" className="text-xs font-medium gap-1.5">
+              <CreditCard className="h-3.5 w-3.5" /> Invoices &amp; Payments ({invoices.length})
+            </TabsTrigger>
+            <TabsTrigger value="messages" className="text-xs font-medium gap-1.5">
+              <Send className="h-3.5 w-3.5" /> Contact CA ({notes.length})
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Tab 1: Engagements & Checklist */}
+          <TabsContent value="engagements" className="space-y-4">
+            {engagements.length === 0 ? (
+              <Card className="border-slate-200 text-center py-12">
+                <CardContent className="text-slate-500 text-sm">
+                  No active filings currently scheduled for your account.
+                </CardContent>
+              </Card>
+            ) : (
+              engagements.map((eng) => {
+                const engChecklist = checklistItems.filter(
+                  (i) => i.engagement_id === eng.id
+                );
+
+                return (
+                  <Card key={eng.id} className="border-slate-200 overflow-hidden">
+                    <CardHeader className="bg-slate-50/70 border-b border-slate-100 pb-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <CardTitle className="text-lg">{eng.title}</CardTitle>
+                            <Badge variant="outline" className="text-xs">
+                              {eng.type}
+                            </Badge>
+                          </div>
+                          <CardDescription className="mt-1">
+                            Due Date:{" "}
+                            <span className="font-semibold text-slate-700">
+                              {formatDate(eng.due_date)}
+                            </span>
+                          </CardDescription>
+                        </div>
+                        <Badge
+                          className={
+                            eng.status.toLowerCase() === "completed"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-blue-100 text-blue-800"
+                          }
+                        >
+                          {eng.status}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="p-4 space-y-3">
+                      <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                        Required Documents &amp; Tasks:
+                      </h4>
+
+                      {engChecklist.length === 0 ? (
+                        <p className="text-xs text-slate-500">
+                          All initial requirements cleared.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {engChecklist.map((item) => {
+                            const isUploaded =
+                              item.status.toLowerCase() === "uploaded" ||
+                              item.status.toLowerCase() === "approved" ||
+                              item.status.toLowerCase() === "verified";
+
+                            return (
+                              <div
+                                key={item.id}
+                                className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-white"
+                              >
+                                <div className="flex items-center gap-3">
+                                  {isUploaded ? (
+                                    <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+                                  ) : (
+                                    <AlertCircle className="h-5 w-5 text-amber-500 shrink-0" />
+                                  )}
+                                  <div>
+                                    <div className="text-sm font-semibold text-slate-900">
+                                      {item.title}
+                                    </div>
+                                    {item.description && (
+                                      <div className="text-xs text-slate-500">
+                                        {item.description}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div>
+                                  {isUploaded ? (
+                                    <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">
+                                      {item.status}
+                                    </Badge>
+                                  ) : (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="text-xs gap-1"
+                                      onClick={() => {
+                                        setTargetEngagementId(eng.id);
+                                        setTargetChecklistId(item.id);
+                                        setTargetChecklistTitle(item.title);
+                                        setUploadOpen(true);
+                                      }}
+                                    >
+                                      <Upload className="h-3.5 w-3.5" /> Upload File
+                                    </Button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })
+            )}
+          </TabsContent>
+
+          {/* Tab 2: Uploaded Documents */}
+          <TabsContent value="documents">
+            <Card className="border-slate-200">
+              <CardHeader>
+                <CardTitle className="text-base">Document Vault Repository</CardTitle>
+                <CardDescription>
+                  All files securely stored and accessible by your CA team.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {documents.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500 text-sm">
+                    No documents uploaded yet. Click &quot;Upload Document&quot; above to begin.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {documents.map((doc) => (
+                      <div
+                        key={doc.id}
+                        className="py-3 flex items-center justify-between gap-4"
+                      >
+                        <div className="flex items-center gap-3">
+                          <FileText className="h-6 w-6 text-slate-500 shrink-0" />
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">
+                              {doc.title || doc.file_name}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {formatDate(doc.uploaded_at)} • {doc.file_name}
+                            </div>
+                          </div>
+                        </div>
+
+                        <Badge
+                          variant="outline"
+                          className={
+                            doc.status.toLowerCase() === "verified"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-slate-100 text-slate-700"
+                          }
+                        >
+                          {doc.status}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Tab 3: Invoices */}
+          <TabsContent value="invoices">
+            <Card className="border-slate-200">
+              <CardHeader>
+                <CardTitle className="text-base">Invoices &amp; Fee Statements</CardTitle>
+                <CardDescription>
+                  View and settle professional fees and compliance filing retainers.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {invoices.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500 text-sm">
+                    No invoices generated for your account.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {invoices.map((inv) => {
+                      const total = inv.total_amount ?? (inv.amount + (inv.tax || 0));
+                      const isPaid = inv.status.toLowerCase() === "paid";
+
+                      return (
+                        <div
+                          key={inv.id}
+                          className="py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+                        >
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-semibold text-slate-900">
+                                {inv.invoice_number}
+                              </span>
+                              <Badge
+                                className={
+                                  isPaid
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                    : "bg-amber-50 text-amber-700 border-amber-200"
+                                }
+                              >
+                                {inv.status}
+                              </Badge>
+                            </div>
+                            <div className="text-xs text-slate-500 mt-0.5">
+                              Due: {formatDate(inv.due_date)}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-4">
+                            <span className="text-base font-bold text-slate-900">
+                              {fmtINR(total)}
+                            </span>
+                            {!isPaid && inv.payment_link && (
+                              <Button
+                                size="sm"
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs gap-1"
+                                onClick={() => window.open(inv.payment_link!, "_blank")}
+                              >
+                                <CreditCard className="h-3.5 w-3.5" /> Pay Now
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Tab 4: Messages with CA Firm */}
+          <TabsContent value="messages">
+            <Card className="border-slate-200">
+              <CardHeader>
+                <CardTitle className="text-base">CA Communication Thread</CardTitle>
+                <CardDescription>
+                  Send queries, notes, and instructions directly to your assigned CA.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <form onSubmit={handleSendComment} className="space-y-2">
+                  <Textarea
+                    value={newComment}
+                    onChange={(e) => setNewComment(e.target.value)}
+                    placeholder="Type your message or query here..."
+                    rows={3}
+                  />
+                  <div className="flex justify-end">
+                    <Button type="submit" size="sm" disabled={isSendingComment || !newComment.trim()}>
+                      {isSendingComment ? (
+                        <>
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Sending...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="mr-1.5 h-3.5 w-3.5" /> Send Message
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </form>
+
+                <div className="border-t border-slate-100 pt-4 space-y-3">
+                  {notes.length === 0 ? (
+                    <p className="text-xs text-slate-500 text-center py-4">
+                      No message history yet. Send a note above to initiate communication.
+                    </p>
+                  ) : (
+                    notes.map((note) => (
+                      <div
+                        key={note.id}
+                        className="rounded-lg bg-slate-50 p-3 border border-slate-200 text-xs space-y-1"
+                      >
+                        <div className="flex items-center justify-between text-slate-500">
+                          <span className="font-semibold text-slate-700">Client Note</span>
+                          <span>{formatDate(note.created_at)}</span>
+                        </div>
+                        <p className="text-slate-800 leading-relaxed">{note.body}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+
+        {/* Document Upload Modal */}
+        <PortalDocumentUpload
+          open={uploadOpen}
+          onOpenChange={setUploadOpen}
+          clientId={client.id}
+          engagementId={targetEngagementId}
+          checklistItemId={targetChecklistId}
+          checklistItemTitle={targetChecklistTitle}
+          onSuccess={() => void loadPortalData()}
+        />
       </main>
     </div>
   );

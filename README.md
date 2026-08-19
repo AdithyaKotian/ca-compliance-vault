@@ -1,285 +1,209 @@
 # CA Compliance Vault
 
-A modern web application built to help Chartered Accountants and accounting firms manage clients, engagements, compliance documents, invoices, and approvals from one place.
-
-The goal of this project was to create a clean and organized platform that simplifies day-to-day compliance work while providing clients with a dedicated portal to view documents, invoices, and engagement updates.
+A production-grade SaaS platform for Chartered Accountant (CA) and tax consultancy firms to manage clients, compliance engagements, documents, and invoices.
 
 ---
 
-## Project Preview
+## 🔗 Project Links
 
-> **Dashboard**
-
-<!-- Add dashboard screenshot here -->
-
-![Dashboard](public/screenshots/dashboard.png)
+- **Live Demo**: [https://ca-compliance-vault.vercel.app](https://ca-compliance-vault.vercel.app)
+- **GitHub Repository**: [https://github.com/adithyakotian/ca-compliance-vault](https://github.com/adithyakotian/ca-compliance-vault)
 
 ---
 
-> **Clients**
+## 🌟 Features
 
-<!-- Add clients screenshot here -->
-
-![Clients](public/screenshots/clients.png)
-
----
-
-> **Client Details**
-
-<!-- Add client details screenshot here -->
-
-![Client Details](public/screenshots/client-details.png)
-
----
-
-> **Documents**
-
-<!-- Add documents screenshot here -->
-
-![Documents](public/screenshots/documents.png)
-
----
-
-> **Invoices**
-
-<!-- Add invoices screenshot here -->
-
-![Invoices](public/screenshots/invoices.png)
-
----
-
-> **Calendar**
-
-<!-- Add calendar screenshot here -->
-
-![Calendar](public/screenshots/calendar.png)
-
----
-
-> **Settings**
-
-<!-- Add settings screenshot here -->
-
-![Settings](public/screenshots/settings.png)
-
----
-
-> **Client Portal**
-
-<!-- Add client portal screenshot here -->
-
-![Client Portal](public/screenshots/client-portal.png)
-
----
-
-## Features
-
-### Dashboard
-
-- Overview of firm activity
-- Upcoming compliance deadlines
-- Recent client activity
-- Pending approvals
-- Revenue summary
+### Authentication & Security
+- Email/password authentication with Supabase Auth
+- Role-based access control (Admin, Accountant, Client)
+- Password reset and recovery flow with complexity validation
+- Protected routes with Next.js Middleware
+- PostgreSQL Row Level Security (RLS) policies on all tables
 
 ### Client Management
+- Full CRUD operations with pre-filled edit forms
+- Real-time search and risk-tier filtering (Low, Medium, High)
+- Primary contact person mapping (email, phone, designation)
+- Cascading deletion with accessible Radix UI confirmation alerts
+- Dedicated client detail views (`/clients/[clientId]`)
 
-- View all registered clients
-- Client profile with complete information
-- Engagement history
-- Compliance checklist
-- Documents and invoices linked to each client
+### Document Management & Vault
+- Secure drag-and-drop file upload to Supabase Storage
+- Direct download via 60-second expiring signed URLs
+- Strict client-side file type (PDF, JPG, PNG, DOCX, XLSX, ZIP) and size validation (max 10MB)
+- Live document status tracking (Uploaded, Verified, Pending, Rejected)
 
-### Engagement Tracking
+### Engagement Management
+- Track statutory return filings (ITR, GST, Audit, ROC, TDS, Other)
+- Status lifecycle tracking (Not Started, In Progress, Waiting for Client, In Review, Completed, Overdue)
+- Priority matrix with deadline sorting, search, and checklist binding
+- Cascade deletion of child checklist tasks and uploaded files
 
-- Create new engagements
-- Assign services
-- Track status
-- Monitor due dates
-- Approval workflow
+### Invoice Management & GST Billing
+- Auto-numbering sequence generation (`INV-YYYY-XXXX`)
+- Dynamic GST calculation across tax slabs (0%, 5%, 12%, 18%, 28%)
+- One-click "Mark as Paid" action with payment timestamps
+- Financial dashboards: Total Billed, Collected/Paid, Outstanding Balance, Overdue
 
-### Document Management
+### Statutory Calendar & Deadlines
+- Interactive monthly grid view with month navigation
+- Unified statutory return filing deadlines and invoice due dates
+- Color-coded events: Deadline (Red), Meeting (Blue), Task (Green), Reminder (Yellow), Invoice (Purple)
+- Dedicated 7-day upcoming deadlines sidebar
 
-- Store compliance documents
-- Organize documents by client
-- Download documents
-- Track uploaded files
-
-### Invoice Management
-
-- Invoice overview
-- Payment status
-- Due dates
-- Payment links
-
-### Calendar
-
-- Compliance schedule
-- Upcoming deadlines
-- Important dates
-- Engagement timeline
-
-### Client Portal
-
-Clients can securely access:
-
-- Engagement details
-- Uploaded documents
-- Invoice history
-- Compliance checklist
-- Firm communication
-
-### Settings
-
-- Firm profile
-- User preferences
-- Application configuration
+### Branded Client Portal
+- Isolated client self-service interface (`/client-portal`)
+- Session-derived identity verification (prevents IDOR URL tampering)
+- Checklist completion progress tracking
+- One-click document upload for requested statements
+- Invoice viewing with integrated payment links
+- Direct communication and messaging thread saved to database
 
 ---
 
-## Tech Stack
+## 🛠️ Tech Stack
 
-### Frontend
-
-- Next.js 15
-- React
-- TypeScript
-- Tailwind CSS
-- shadcn/ui
-
-### Backend
-
-- Supabase
-- PostgreSQL
-
-### Tools
-
-- ESLint
-- npm
-- Git
-- GitHub
+- **Framework**: Next.js 16 (App Router)
+- **UI Library**: React 19, TypeScript
+- **Styling**: Tailwind CSS 4, Radix UI Primitives, Lucide React Icons
+- **Database & Storage**: Supabase (PostgreSQL, Auth, SSR, Storage Buckets)
+- **Forms & Validation**: React Hook Form + Zod
+- **Utilities**: date-fns, Sonner (toasts)
 
 ---
 
-## Folder Structure
+## 📸 Screenshots
 
-```
-app/
-components/
-lib/
-public/
+### Operations Dashboard
+*Real-time overview of active clients, in-progress filings, document requests, and upcoming statutory deadlines.*
 
-├── dashboard
-├── clients
-├── engagements
-├── documents
-├── invoices
-├── calendar
-├── settings
-├── client-portal
-```
+![Dashboard](screenshots/dashboard.png)
 
 ---
 
-## Database
+### Client Management
+*Comprehensive client directory with risk tiering, search, and quick actions.*
 
-The project uses Supabase with PostgreSQL.
-
-Main tables include:
-
-- clients
-- engagements
-- checklist_items
-- documents
-- invoices
-
-Each module reads data directly from Supabase using the official JavaScript client.
+![Clients](screenshots/clients.png)
 
 ---
 
-## Getting Started
+### Client Details
+*Detailed profile view with primary contacts and linked engagements.*
 
-Clone the repository.
+![Client Details](screenshots/client-details.png)
 
+---
+
+### Encrypted Document Vault
+*Cloud-backed document repository with 60-second expiring signed URLs and status workflows.*
+
+![Documents](screenshots/documents.png)
+
+---
+
+### Invoices & GST Billing
+*Multi-slab GST billing, auto-numbering, and payment reconciliation.*
+
+![Invoices](screenshots/invoices.png)
+
+---
+
+### Compliance & Meeting Calendar
+*Unified monthly calendar tracking statutory filing deadlines and payment due dates.*
+
+![Calendar](screenshots/calendar.png)
+
+---
+
+### User Profile & Settings
+*Account settings with Supabase Storage avatar uploads and password security management.*
+
+![Settings](screenshots/settings.png)
+
+---
+
+### Branded Client Portal
+*Isolated self-service portal for clients to track checklist progress and upload files.*
+
+![Client Portal](screenshots/client-portal.png)
+
+---
+
+## 🚀 Getting Started
+
+### 1. Prerequisites
+- Node.js 18+ installed
+- A Supabase project created
+
+### 2. Clone and Install
 ```bash
-git clone <repository-url>
-```
-
-Go into the project.
-
-```bash
+git clone https://github.com/adithyakotian/ca-compliance-vault.git
 cd ca-compliance-vault
-```
-
-Install dependencies.
-
-```bash
 npm install
 ```
 
-Create an environment file.
-
-```
-.env.local
-```
-
-Add your Supabase credentials.
-
+### 3. Configure Environment Variables
+Create a `.env.local` file in the root directory:
 ```env
-NEXT_PUBLIC_SUPABASE_URL=YOUR_SUPABASE_URL
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_ANON_KEY
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
 ```
 
-Start the development server.
+### 4. Initialize Database & RLS
+1. Open your Supabase Dashboard -> **SQL Editor**.
+2. Run the SQL script from [`supabase-rls.sql`](./supabase-rls.sql).
+3. The script automatically sets up all RLS policies and provisions the `avatars` (public) and `documents` (private) storage buckets.
 
+### 5. Run Development Server
 ```bash
 npm run dev
 ```
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-Open
+---
 
+## 🔑 Demo Credentials
+
+| Role | Email | Password | Default Landing Page |
+| :--- | :--- | :--- | :--- |
+| **Firm Admin** | `admin@kotianandco.in` | `demo123` | `/dashboard` |
+| **Client** | `client@abctraders.in` | `demo123` | `/client-portal` |
+
+---
+
+## 🧪 Production Verification
+
+```bash
+# Run ESLint (0 errors)
+npm run lint
+
+# Build production Next.js bundle
+npm run build
 ```
-http://localhost:3000
-```
 
 ---
 
-## Future Improvements
+## 📦 Deployment to Vercel
 
-Some features planned for future versions include:
-
-- Authentication and role-based access
-- Email notifications
-- File upload using Supabase Storage
-- PDF generation
-- Payment gateway integration
-- Audit logs
-- Analytics dashboard
-- Mobile responsive improvements
-
----
-
-## What I Learned
-
-This project helped me gain hands-on experience with:
-
-- Building applications using Next.js App Router
-- Designing reusable React components
-- Integrating Supabase with PostgreSQL
-- Managing relational data
-- Creating responsive user interfaces
-- Organizing larger frontend projects
-- Debugging API and database issues
-- Working with TypeScript in production-style projects
+1. Push your repository to GitHub:
+   ```bash
+   git add .
+   git commit -m "Complete CA Compliance Vault with RLS policies and storage buckets"
+   git push origin main
+   ```
+2. Import repository into [Vercel](https://vercel.com).
+3. Set environment variables:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+4. Update Supabase Authentication URL Configuration:
+   - Site URL: `https://ca-compliance-vault.vercel.app`
+   - Redirect URLs: `https://ca-compliance-vault.vercel.app/**`
+5. Deploy and verify live production endpoints!
 
 ---
 
-## Author
+## 👨‍💻 Author
 
 **Adithya Kotian**
-
----
-
-## License
-
-This project is available for learning and portfolio purposes.
+- Portfolio SaaS Application for Chartered Accountants & Tax Consultancies

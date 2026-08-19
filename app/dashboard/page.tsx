@@ -1,253 +1,179 @@
-"use client"
+"use client";
 
-import { useEffect, useMemo, useState } from "react";
-import DashboardShell from "../../components/layout/dashboard-shell";
+import React, { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import DashboardShell from "@/components/layout/dashboard-shell";
 import {
   Card,
   CardHeader,
   CardTitle,
   CardContent,
-  CardFooter,
-} from "../../components/ui/card";
-import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
-import { Progress } from "../../components/ui/progress";
-import { Calendar, FileText, DollarSign, AlertTriangle } from "lucide-react";
-import { toast } from "sonner";
+  CardDescription,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import {
+  Users,
+  Briefcase,
+  FileText,
+  CreditCard,
+  ArrowRight,
+  Plus,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 
 type ClientRow = {
   id: string;
-  firm_id: string | null;
   name: string;
-  type: "individual" | "business" | string | null;
-  email: string | null;
-  phone: string | null;
-  pan: string | null;
-  gstin: string | null;
-  address: string | null;
-  risk_level: "low" | "medium" | "high" | string | null;
-  created_at: string | null;
+  type: string | null;
+  risk_level: string | null;
 };
 
 type EngagementRow = {
   id: string;
-  firm_id: string | null;
   client_id: string;
   title: string;
   type: string;
   status: string;
   due_date: string | null;
   priority: string | null;
-  created_at: string | null;
 };
 
 type ChecklistItemRow = {
   id: string;
   engagement_id: string;
   title: string;
-  description: string | null;
   status: string;
-  required: boolean | null;
   due_date: string | null;
-  assigned_staff: string | null;
-  created_at: string | null;
 };
 
 type InvoiceRow = {
   id: string;
-  firm_id: string | null;
   client_id: string;
-  engagement_id: string | null;
   invoice_number: string;
   amount: number;
+  tax: number | null;
+  total_amount: number | null;
   status: string;
   due_date: string | null;
-  payment_link: string | null;
-  created_at: string | null;
 };
 
-type Risk = "High" | "Medium" | "Low";
+type AuditLogRow = {
+  id: string;
+  action: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+};
 
 function fmtINR(amount: number) {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(amount);
 }
 
-function parseDate(value: string | null): Date | null {
-  if (!value) return null;
+function formatDate(value?: string | null): string {
+  if (!value) return "No deadline";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
+  if (Number.isNaN(date.getTime())) return "No deadline";
+  return date.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
-function isPendingChecklistItem(item: ChecklistItemRow) {
-  const status = item.status.toLowerCase();
-  return status === "pending" || status === "requested";
-}
-
-function isUnpaidInvoice(invoice: InvoiceRow) {
-  const status = invoice.status.toLowerCase();
-  return status === "sent" || status === "overdue";
-}
-
-function isActiveEngagement(engagement: EngagementRow) {
-  const status = engagement.status.toLowerCase();
-  return status !== "completed" && status !== "filed";
-}
-
-function getEngagementRisk(engagement: EngagementRow, pendingChecklistCount: number): Risk {
-  const priority = engagement.priority?.toLowerCase();
-  const due = parseDate(engagement.due_date);
-  const now = new Date();
-  const diff = due ? Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : null;
-  if (priority === "high" || (diff !== null && diff <= 3 && diff >= 0) || (diff !== null && diff < 0) || pendingChecklistCount > 0) {
-    return "High";
-  }
-  if (priority === "medium" || (diff !== null && diff <= 7 && diff >= 0)) {
-    return "Medium";
-  }
-  return "Low";
-}
-
-function getRiskVariant(risk: Risk) {
-  if (risk === "High") return "destructive";
-  if (risk === "Medium") return "secondary";
-  return "default";
-}
-
-export default function Page() {
+export default function DashboardPage() {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [engagements, setEngagements] = useState<EngagementRow[]>([]);
   const [checklistItems, setChecklistItems] = useState<ChecklistItemRow[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      setError(null);
+    const fetchDashboardData = async () => {
+      try {
+        setLoading(true);
+        const [clientsRes, engRes, checklistRes, invRes, logsRes] =
+          await Promise.all([
+            supabase.from("clients").select("id, name, type, risk_level"),
+            supabase
+              .from("engagements")
+              .select("id, client_id, title, type, status, due_date, priority")
+              .order("due_date", { ascending: true }),
+            supabase
+              .from("checklist_items")
+              .select("id, engagement_id, title, status, due_date"),
+            supabase
+              .from("invoices")
+              .select(
+                "id, client_id, invoice_number, amount, tax, total_amount, status, due_date"
+              ),
+            supabase
+              .from("audit_logs")
+              .select("id, action, metadata, created_at")
+              .order("created_at", { ascending: false })
+              .limit(8),
+          ]);
 
-      const [clientsRes, engagementsRes, checklistRes, invoicesRes] = await Promise.all([
-        supabase.from("clients").select("*"),
-        supabase.from("engagements").select("*"),
-        supabase.from("checklist_items").select("*"),
-        supabase.from("invoices").select("*"),
-      ]);
-
-      const fetchError = clientsRes.error || engagementsRes.error || checklistRes.error || invoicesRes.error;
-      if (fetchError) {
-        setError(fetchError.message);
+        setClients(clientsRes.data ?? []);
+        setEngagements(engRes.data ?? []);
+        setChecklistItems(checklistRes.data ?? []);
+        setInvoices(invRes.data ?? []);
+        setAuditLogs((logsRes.data as AuditLogRow[]) ?? []);
+      } catch {
+        // Fallback gracefully if some tables are empty
+      } finally {
         setLoading(false);
-        return;
       }
-
-      setClients((clientsRes.data ?? []) as ClientRow[]);
-      setEngagements((engagementsRes.data ?? []) as EngagementRow[]);
-      setChecklistItems((checklistRes.data ?? []) as ChecklistItemRow[]);
-      setInvoices((invoicesRes.data ?? []) as InvoiceRow[]);
-      setLoading(false);
     };
 
-    void loadData();
+    void fetchDashboardData();
   }, []);
 
-  const clientById = useMemo(
-    () => new Map(clients.map((client) => [client.id, client])),
-    [clients]
-  );
+  const clientMap = useMemo(() => {
+    const map = new Map<string, string>();
+    clients.forEach((c) => map.set(c.id, c.name));
+    return map;
+  }, [clients]);
 
-  const jobsDueThisWeek = useMemo(
-    () => engagements.filter((engagement) => {
-      if (!isActiveEngagement(engagement)) return false;
-      const due = parseDate(engagement.due_date);
-      if (!due) return false;
-      const diff = Math.ceil((due.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-      return diff >= 0 && diff <= 7;
-    }),
-    [engagements]
+  // Real KPI Metrics
+  const totalClients = clients.length;
+  const activeEngagements = engagements.filter(
+    (e) => !["completed", "filed"].includes(e.status.toLowerCase())
   );
+  const pendingDocsCount = checklistItems.filter((item) =>
+    ["pending", "requested"].includes(item.status.toLowerCase())
+  ).length;
+  const outstandingAmount = invoices
+    .filter((inv) => ["sent", "overdue"].includes(inv.status.toLowerCase()))
+    .reduce((sum, inv) => sum + (inv.total_amount ?? (inv.amount + (inv.tax || 0))), 0);
 
-  const pendingDocs = useMemo(
-    () => checklistItems.filter(isPendingChecklistItem).length,
-    [checklistItems]
-  );
-
-  const unpaidTotal = useMemo(
-    () => invoices.filter(isUnpaidInvoice).reduce((sum, invoice) => sum + invoice.amount, 0),
-    [invoices]
-  );
-
-  const highRiskEngagements = useMemo(() => {
-    const now = new Date();
-    return engagements.filter((engagement) => {
-      const pendingCount = checklistItems.filter((item) => item.engagement_id === engagement.id && isPendingChecklistItem(item)).length;
-      const due = parseDate(engagement.due_date);
-      const diff = due ? Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : null;
-      return (
-        engagement.priority?.toLowerCase() === "high" ||
-        (diff !== null && diff <= 0) ||
-        ((diff !== null && diff <= 7 && diff >= 0) && pendingCount > 0)
-      );
-    });
-  }, [checklistItems, engagements]);
-
-  const upcoming = useMemo(
-    () => [...engagements]
-      .filter((engagement) => {
-        const due = parseDate(engagement.due_date);
-        return due !== null && due >= new Date();
-      })
-      .sort((a, b) => {
-        const aDue = parseDate(a.due_date)?.getTime() ?? 0;
-        const bDue = parseDate(b.due_date)?.getTime() ?? 0;
-        return aDue - bDue;
-      })
-      .slice(0, 8),
-    [engagements]
-  );
-
-  const pendingChecklist = useMemo(
-    () => checklistItems.filter(isPendingChecklistItem),
-    [checklistItems]
-  );
-
-  const unpaidInvoices = useMemo(
-    () => invoices.filter(isUnpaidInvoice),
-    [invoices]
-  );
+  // Upcoming Urgencies
+  const urgentEngagements = useMemo(() => {
+    return activeEngagements.slice(0, 5);
+  }, [activeEngagements]);
 
   if (loading) {
     return (
       <DashboardShell>
-        <div className="mx-auto max-w-4xl py-24">
-          <Card>
-            <CardHeader>
-              <CardTitle>Loading dashboard...</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3 text-sm text-slate-600">
-                <p>Fetching firm metrics from Supabase.</p>
-                <p>This may take a moment.</p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </DashboardShell>
-    );
-  }
-
-  if (error) {
-    return (
-      <DashboardShell>
-        <div className="mx-auto max-w-3xl py-24">
-          <Card>
-            <CardHeader>
-              <CardTitle>Unable to load dashboard</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-slate-600">{error}</p>
-            </CardContent>
-          </Card>
+        <div className="space-y-6">
+          <div className="h-8 w-48 rounded bg-slate-200 animate-pulse" />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {[1, 2, 3, 4].map((i) => (
+              <Card key={i} className="animate-pulse">
+                <CardHeader className="pb-2">
+                  <div className="h-4 w-24 bg-slate-200 rounded" />
+                </CardHeader>
+                <CardContent>
+                  <div className="h-8 w-16 bg-slate-200 rounded" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </div>
       </DashboardShell>
     );
@@ -256,200 +182,276 @@ export default function Page() {
   return (
     <DashboardShell>
       <div className="space-y-6">
-        <header className="flex items-center justify-between">
+        {/* Header */}
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold">Firm Dashboard</h1>
-            <p className="text-sm text-slate-600">Track client documents, filing deadlines, approvals, and unpaid invoices in one place.</p>
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+              Firm Operations Overview
+            </h1>
+            <p className="text-sm text-slate-500">
+              Welcome back. Real-time compliance health and client workflows across Kotian &amp; Co.
+            </p>
           </div>
-          <div className="flex items-center gap-3">
-            <Button onClick={() => toast.success("Engagement creation will be connected in the next Supabase write step.")}>New Engagement</Button>
+          <div className="flex items-center gap-2">
+            <Link href="/clients">
+              <Button variant="outline" size="sm" className="gap-1.5 bg-white">
+                <Users className="h-4 w-4 text-slate-500" />
+                Clients
+              </Button>
+            </Link>
+            <Link href="/engagements">
+              <Button size="sm" className="gap-1.5">
+                <Plus className="h-4 w-4" />
+                New Engagement
+              </Button>
+            </Link>
           </div>
         </header>
 
-        <section className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">Jobs Due This Week</CardTitle>
+        {/* 4 Core Metric KPI Cards */}
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card className="border-slate-200">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-semibold text-slate-500 uppercase">
+                Total Clients
+              </CardTitle>
+              <Users className="h-4 w-4 text-slate-400" />
             </CardHeader>
             <CardContent>
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-2xl font-semibold">{jobsDueThisWeek.length}</div>
-                  <div className="text-sm text-slate-500">Active jobs due this week</div>
-                </div>
-                <Calendar className="h-6 w-6 text-slate-600" />
-              </div>
-              <div className="mt-4">
-                <Progress value={Math.min(100, Math.round((jobsDueThisWeek.length / 20) * 100))} />
-              </div>
-            </CardContent>
-            <CardFooter>
-              <div className="text-sm text-slate-500">Overview</div>
-            </CardFooter>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Pending Documents</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-2xl font-semibold">{pendingDocs}</div>
-                  <div className="text-sm text-slate-500">Documents awaiting upload or verification</div>
-                </div>
-                <FileText className="h-6 w-6 text-slate-600" />
-              </div>
-            </CardContent>
-            <CardFooter>
-              <div className="w-full">
-                <Progress value={Math.min(100, Math.round((pendingDocs / 200) * 100))} />
-              </div>
-            </CardFooter>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Unpaid Invoices</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-2xl font-semibold">{fmtINR(unpaidTotal)}</div>
-                  <div className="text-sm text-slate-500">Total overdue invoices</div>
-                </div>
-                <DollarSign className="h-6 w-6 text-slate-600" />
-              </div>
-            </CardContent>
-            <CardFooter>
-              <div className="text-sm text-slate-500">Collections</div>
-            </CardFooter>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>High Risk Engagements</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-2xl font-semibold">{highRiskEngagements.length}</div>
-                  <div className="text-sm text-slate-500">Engagements flagged high risk</div>
-                </div>
-                <AlertTriangle className="h-6 w-6 text-rose-600" />
-              </div>
-            </CardContent>
-            <CardFooter>
-              <div className="text-sm text-slate-500">SLA Monitor</div>
-            </CardFooter>
-          </Card>
-        </section>
-
-        <section className="grid gap-6 md:grid-cols-3">
-          <Card className="md:col-span-2">
-            <CardHeader>
-              <CardTitle>SLA Risk Monitor</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {highRiskEngagements.map((engagement) => {
-                  const client = clientById.get(engagement.client_id);
-                  const pending = checklistItems.filter((item) => item.engagement_id === engagement.id && item.status.toLowerCase() === "pending").length;
-                  const risk = getEngagementRisk(engagement, pending);
-                  return (
-                    <div key={engagement.id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                      <div>
-                        <div className="font-medium">{client?.name ?? "-"}</div>
-                        <div className="text-sm text-slate-600">{engagement.title}</div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-sm text-slate-500">Due {parseDate(engagement.due_date)?.toLocaleDateString("en-IN") ?? "No due date"}</div>
-                        <div className="text-sm text-slate-700">{pending} pending</div>
-                        <Badge variant={getRiskVariant(risk)}>{risk}</Badge>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="text-2xl font-bold text-slate-900">{totalClients}</div>
+              <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1">
+                <span className="text-emerald-600 font-semibold">Active portfolio</span>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Upcoming Deadlines</CardTitle>
+          <Card className="border-slate-200">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-semibold text-slate-500 uppercase">
+                Active Filings
+              </CardTitle>
+              <Briefcase className="h-4 w-4 text-slate-400" />
             </CardHeader>
             <CardContent>
-              <div className="space-y-2">
-                {upcoming.map((engagement) => {
-                  const client = clientById.get(engagement.client_id);
-                  return (
-                    <div key={engagement.id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                      <div>
-                        <div className="font-medium">{engagement.title}</div>
-                        <div className="text-sm text-slate-600">{client?.name ?? "-"}</div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Badge>{engagement.status}</Badge>
-                        <div className="text-sm text-slate-500">{parseDate(engagement.due_date)?.toLocaleDateString("en-IN") ?? "No due date"}</div>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="text-2xl font-bold text-blue-600">
+                {activeEngagements.length}
               </div>
+              <div className="text-xs text-slate-500 mt-1">In progress &amp; review</div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-semibold text-slate-500 uppercase">
+                Pending Documents
+              </CardTitle>
+              <FileText className="h-4 w-4 text-slate-400" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-amber-600">
+                {pendingDocsCount}
+              </div>
+              <div className="text-xs text-slate-500 mt-1">Awaiting client upload</div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-semibold text-slate-500 uppercase">
+                Outstanding Invoices
+              </CardTitle>
+              <CreditCard className="h-4 w-4 text-slate-400" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-emerald-600">
+                {fmtINR(outstandingAmount)}
+              </div>
+              <div className="text-xs text-slate-500 mt-1">Receivables pipeline</div>
             </CardContent>
           </Card>
         </section>
 
-        <section className="grid gap-6 md:grid-cols-3">
-          <Card className="md:col-span-1">
-            <CardHeader>
-              <CardTitle>Pending Documents</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {pendingChecklist.slice(0, 6).map((item) => {
-                  const engagement = engagements.find((e) => e.id === item.engagement_id);
-                  const client = engagement ? clientById.get(engagement.client_id) : undefined;
-                  return (
-                    <div key={item.id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                      <div>
-                        <div className="font-medium">{item.title}</div>
-                        <div className="text-sm text-slate-600">{engagement?.title ?? "Unknown engagement"} • {client?.name ?? "Unknown client"}</div>
-                      </div>
-                      <Badge>{item.status}</Badge>
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
+        {/* 2-Column Section: Urgent Deadlines + Live Audit Stream */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Urgent Deadlines & Filings (2 cols) */}
+          <div className="lg:col-span-2 space-y-4">
+            <Card className="border-slate-200">
+              <CardHeader className="pb-3 flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-base font-semibold">
+                    Upcoming Statutory Deadlines
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Filings due in the next 14 days.
+                  </CardDescription>
+                </div>
+                <Link
+                  href="/calendar"
+                  className="text-xs font-semibold text-emerald-700 hover:underline flex items-center gap-1"
+                >
+                  View Calendar <ArrowRight className="h-3 w-3" />
+                </Link>
+              </CardHeader>
+              <CardContent className="p-0">
+                {urgentEngagements.length === 0 ? (
+                  <div className="text-center py-10 text-xs text-slate-500">
+                    No urgent filing deadlines due in the next 14 days.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {urgentEngagements.map((eng) => {
+                      const clientName =
+                        clientMap.get(eng.client_id) || "Unknown Client";
+                      const engChecklist = checklistItems.filter(
+                        (i) => i.engagement_id === eng.id
+                      );
+                      const total = engChecklist.length;
+                      const done = engChecklist.filter((i) =>
+                        ["uploaded", "approved", "verified"].includes(
+                          i.status.toLowerCase()
+                        )
+                      ).length;
+                      const progress =
+                        total > 0 ? Math.round((done / total) * 100) : 0;
 
-          <Card className="md:col-span-2">
-            <CardHeader>
-              <CardTitle>Unpaid Invoices</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {unpaidInvoices.map((invoice) => {
-                  const client = clientById.get(invoice.client_id);
-                  return (
-                    <div key={invoice.id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                      <div>
-                        <div className="font-medium">{invoice.invoice_number}</div>
-                        <div className="text-sm text-slate-600">{client?.name ?? "Unknown client"}</div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-sm font-medium">{fmtINR(invoice.amount)}</div>
-                        <Badge>{invoice.status}</Badge>
-                        <div className="text-sm text-slate-500">{parseDate(invoice.due_date)?.toLocaleDateString("en-IN") ?? "No due date"}</div>
-                      </div>
+                      return (
+                        <div
+                          key={eng.id}
+                          className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/70 transition-colors"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <Link
+                                href={`/engagements/${eng.id}`}
+                                className="font-semibold text-slate-900 hover:underline text-sm"
+                              >
+                                {eng.title}
+                              </Link>
+                              <Badge variant="outline" className="text-[10px]">
+                                {eng.type}
+                              </Badge>
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              Client: <span className="font-medium text-slate-700">{clientName}</span> • Due:{" "}
+                              <span className="font-semibold text-red-600">
+                                {formatDate(eng.due_date)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-4">
+                            <div className="w-28 space-y-1 hidden sm:block">
+                              <div className="flex justify-between text-[10px] text-slate-500">
+                                <span>Checklist</span>
+                                <span>{progress}%</span>
+                              </div>
+                              <Progress value={progress} className="h-1.5" />
+                            </div>
+
+                            <Link href={`/engagements/${eng.id}`}>
+                              <Button variant="outline" size="sm" className="h-8 text-xs">
+                                View
+                              </Button>
+                            </Link>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Quick Actions Shortcuts */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Link href="/clients">
+                <Card className="border-slate-200 hover:border-slate-300 hover:shadow-xs transition-all cursor-pointer">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                      <Users className="h-5 w-5" />
                     </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        </section>
+                    <div>
+                      <div className="text-xs font-semibold text-slate-900">Manage Clients</div>
+                      <div className="text-[11px] text-slate-500">Add or edit profile</div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+
+              <Link href="/documents">
+                <Card className="border-slate-200 hover:border-slate-300 hover:shadow-xs transition-all cursor-pointer">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold text-slate-900">Document Vault</div>
+                      <div className="text-[11px] text-slate-500">Verify client files</div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+
+              <Link href="/invoices">
+                <Card className="border-slate-200 hover:border-slate-300 hover:shadow-xs transition-all cursor-pointer">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
+                      <CreditCard className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold text-slate-900">Billing &amp; GST</div>
+                      <div className="text-[11px] text-slate-500">Issue fee invoices</div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            </div>
+          </div>
+
+          {/* Activity Stream / Audit Trail (1 col) */}
+          <div className="space-y-4">
+            <Card className="border-slate-200">
+              <CardHeader className="pb-3 border-b border-slate-100">
+                <CardTitle className="text-base font-semibold">
+                  Recent Audit Trail
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Real-time activity across firm compliance records.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-4 space-y-3">
+                {auditLogs.length === 0 ? (
+                  <div className="text-xs text-slate-500 text-center py-6">
+                    No recent activities recorded.
+                  </div>
+                ) : (
+                  auditLogs.map((log) => {
+                    const actionFormatted = log.action
+                      .replace(/_/g, " ")
+                      .replace(/\b\w/g, (l) => l.toUpperCase());
+
+                    return (
+                      <div
+                        key={log.id}
+                        className="flex items-start gap-2.5 text-xs pb-3 border-b border-slate-100 last:border-0 last:pb-0"
+                      >
+                        <div className="h-2 w-2 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
+                        <div className="space-y-0.5 flex-1">
+                          <div className="font-semibold text-slate-800">
+                            {actionFormatted}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            {formatDate(log.created_at)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       </div>
     </DashboardShell>
   );

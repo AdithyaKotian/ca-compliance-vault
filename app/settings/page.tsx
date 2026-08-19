@@ -1,315 +1,413 @@
-"use client"
+"use client";
 
-import { useState, useMemo } from "react";
-import DashboardShell from "../../components/layout/dashboard-shell";
-import { Button } from "../../components/ui/button";
-import { Card, CardHeader, CardTitle, CardContent } from "../../components/ui/card";
-import { Input } from "../../components/ui/input";
-import { Textarea } from "../../components/ui/textarea";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "../../components/ui/select";
-import { Badge } from "../../components/ui/badge";
+import React, { useState, useEffect } from "react";
+import DashboardShell from "@/components/layout/dashboard-shell";
+import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Avatar } from "@/components/ui/avatar";
 import { toast } from "sonner";
-import { ShieldCheck } from "lucide-react";
+import { User, Lock, Building, Upload, Loader2, CheckCircle2 } from "lucide-react";
+import { supabase } from "@/lib/supabase/client";
+import { useProfile } from "@/components/providers/profile-provider";
 
 export default function SettingsPage() {
-  const [firmName, setFirmName] = useState("Kotian & Co.");
-  const [email, setEmail] = useState("info@kottianco.in");
-  const [phone, setPhone] = useState("+91-824-1234567");
-  const [address, setAddress] = useState("No. 12, MG Road, Mangalore, Karnataka 575001");
-  const [gstin, setGstin] = useState("");
-  const [pan, setPan] = useState("");
-  const [website, setWebsite] = useState("");
+  const { profile, refreshProfile, loading: profileLoading } = useProfile();
 
-  const [portalName, setPortalName] = useState("CA Compliance Vault");
-  const [customDomain, setCustomDomain] = useState("portal.kotianandco.in");
-  const [primaryColor, setPrimaryColor] = useState("#0f172a");
-  const [welcomeMessage, setWelcomeMessage] = useState("Secure document collection and compliance tracking for our clients.");
+  // Profile Edit State
+  const [fullName, setFullName] = useState("");
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
 
-  const [emailReminders, setEmailReminders] = useState(true);
-  const [whatsappTemplateEnabled, setWhatsappTemplateEnabled] = useState(true);
-  const [reminderFrequency, setReminderFrequency] = useState("2");
-  const [escalationDays, setEscalationDays] = useState("3");
-  const [reminderMessage, setReminderMessage] = useState("Hi [Client Name], your documents for [Engagement Name] are pending. Please upload them through your CA Compliance Vault portal.");
+  // Change Password State
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
 
-  const templates = useMemo(() => [
-    { name: "GST Monthly Filing", checkCount: 3, type: "GST" },
-    { name: "GST Quarterly Filing", checkCount: 2, type: "GST" },
-    { name: "ITR Individual", checkCount: 4, type: "ITR" },
-    { name: "ITR Business", checkCount: 5, type: "ITR" },
-    { name: "TDS Return", checkCount: 2, type: "TDS" },
-    { name: "Statutory Audit Documentation", checkCount: 6, type: "Audit" },
-    { name: "ROC Annual Filing", checkCount: 3, type: "ROC" },
-  ], []);
+  useEffect(() => {
+    if (profile?.full_name) {
+      setFullName(profile.full_name);
+    }
+  }, [profile]);
 
-  const staff = useMemo(() => [
-    { name: "Adithya Kotian", role: "Admin", email: "adithya@kottianco.in" },
-    { name: "Priya Sharma", role: "Senior Accountant", email: "priya@kottianco.in" },
-    { name: "Rahul Rao", role: "Staff", email: "rahul@kottianco.in" },
-    { name: "Neha Shetty", role: "Reviewer", email: "neha@kottianco.in" },
-  ], []);
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
 
-  const handleSave = () => {
-    toast.success("Settings save will be connected in Supabase step.");
+    if (!fullName.trim() || fullName.trim().length < 2) {
+      toast.error("Full name must be at least 2 characters");
+      return;
+    }
+
+    if (!profile?.id) {
+      toast.error("User session not found");
+      return;
+    }
+
+    setIsUpdatingProfile(true);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          full_name: fullName.trim(),
+        })
+        .eq("id", profile.id);
+
+      if (error) {
+        toast.error(error.message || "Failed to update profile");
+        return;
+      }
+
+      await refreshProfile();
+      toast.success("Profile updated successfully");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Profile update failed");
+    } finally {
+      setIsUpdatingProfile(false);
+    }
   };
 
-  const handleInvite = () => {
-    toast.success("Staff invitations will be connected in Supabase step.");
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !profile?.id) return;
+
+    // Validation: format and size (max 2MB)
+    const validTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!validTypes.includes(file.type)) {
+      toast.error("Please upload a JPG, PNG, or WEBP image");
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("File size must be under 2MB");
+      return;
+    }
+
+    setIsUploadingAvatar(true);
+    try {
+      const fileExt = file.name.split(".").pop();
+      const filePath = `${profile.id}/avatar-${Date.now()}.${fileExt}`;
+
+      // Upload to Supabase avatars bucket
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(filePath, file, {
+          cacheControl: "3600",
+          upsert: true,
+        });
+
+      if (uploadError) {
+        toast.error(uploadError.message || "Failed to upload avatar image");
+        return;
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from("avatars")
+        .getPublicUrl(filePath);
+
+      const avatarUrl = publicUrlData.publicUrl;
+
+      // Update profile
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({
+          avatar_url: avatarUrl,
+        })
+        .eq("id", profile.id);
+
+      if (profileError) {
+        toast.error(profileError.message || "Failed to save avatar URL");
+        return;
+      }
+
+      await refreshProfile();
+      toast.success("Avatar updated successfully");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Avatar upload failed");
+    } finally {
+      setIsUploadingAvatar(false);
+    }
   };
 
-  const handleTemplateEdit = () => {
-    toast.success("Template editing will be connected in Supabase step.");
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!newPassword || newPassword.length < 8) {
+      toast.error("New password must be at least 8 characters");
+      return;
+    }
+
+    // Password complexity check
+    const hasUpper = /[A-Z]/.test(newPassword);
+    const hasLower = /[a-z]/.test(newPassword);
+    const hasNumber = /[0-9]/.test(newPassword);
+
+    if (!hasUpper || !hasLower || !hasNumber) {
+      toast.error("Password must contain at least 1 uppercase letter, 1 lowercase letter, and 1 number");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      toast.error("Passwords do not match");
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        toast.error(error.message || "Failed to update password");
+        return;
+      }
+
+      setNewPassword("");
+      setConfirmPassword("");
+      toast.success("Password changed successfully");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Password change failed");
+    } finally {
+      setIsUpdatingPassword(false);
+    }
   };
 
-  const handleDanger = (_label?: string) => {
-    void _label;
-    toast.error("This action will be connected in backend step.");
+  const getInitials = (name?: string | null) => {
+    if (!name) return "CA";
+    const parts = name.trim().split(" ");
+    if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
   };
 
   return (
     <DashboardShell>
-      <div className="space-y-6">
-        <header className="flex items-start justify-between rounded-3xl border border-slate-200 bg-white px-6 py-6">
+      <div className="space-y-8 max-w-4xl">
+        <header className="flex items-center justify-between border-b border-slate-200 pb-5">
           <div>
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="h-6 w-6 text-slate-700" />
-              <div>
-                <h1 className="text-2xl font-semibold">Settings</h1>
-                <p className="text-sm text-slate-600">Manage firm profile, portal branding, reminder preferences, templates, and staff access.</p>
-              </div>
-            </div>
+            <h1 className="text-2xl font-bold text-slate-900">User Profile &amp; Settings</h1>
+            <p className="text-sm text-slate-500">
+              Manage your personal credentials, profile picture, and firm subscription details.
+            </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button onClick={handleSave}>Save Changes</Button>
-          </div>
+          <Badge variant="outline" className="text-xs uppercase font-semibold text-slate-600 bg-white">
+            {profile?.role || "Firm Admin"}
+          </Badge>
         </header>
 
-        <section className="grid gap-6 md:grid-cols-3">
-          <Card>
-            <CardHeader>
-              <CardTitle>Firm Profile</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Firm name</label>
-                  <Input value={firmName} onChange={(e) => setFirmName(e.target.value)} />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Contact email</label>
-                  <Input value={email} onChange={(e) => setEmail(e.target.value)} />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Phone number</label>
-                  <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Address</label>
-                  <Textarea value={address} onChange={(e) => setAddress(e.target.value)} />
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="text-sm font-medium text-slate-700">GSTIN</label>
-                    <Input value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="GSTIN" />
+        {/* Section 1: Profile Information */}
+        <Card className="border-slate-200">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <User className="h-5 w-5 text-slate-700" />
+              <CardTitle className="text-lg">Profile Information</CardTitle>
+            </div>
+            <CardDescription>
+              Update your display name and photo shown across compliance records.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Avatar Row */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+              <Avatar className="h-20 w-20 border-2 border-slate-200">
+                {profile?.avatar_url ? (
+                  <img
+                    src={profile.avatar_url}
+                    alt={profile.full_name || "User Avatar"}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center bg-slate-900 text-xl font-bold text-white">
+                    {getInitials(profile?.full_name)}
                   </div>
-                  <div>
-                    <label className="text-sm font-medium text-slate-700">PAN</label>
-                    <Input value={pan} onChange={(e) => setPan(e.target.value)} placeholder="PAN" />
-                  </div>
+                )}
+              </Avatar>
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <label
+                    htmlFor="avatar-upload"
+                    className="inline-flex items-center gap-2 cursor-pointer rounded-md bg-white px-3 py-1.5 text-xs font-medium text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm transition-colors"
+                  >
+                    {isUploadingAvatar ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="h-3.5 w-3.5" />
+                    )}
+                    {isUploadingAvatar ? "Uploading..." : "Upload Photo"}
+                  </label>
+                  <input
+                    id="avatar-upload"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="hidden"
+                    onChange={handleAvatarUpload}
+                    disabled={isUploadingAvatar}
+                  />
                 </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Website</label>
-                  <Input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://" />
+                <p className="text-xs text-slate-500">
+                  Allowed formats: JPG, PNG, or WEBP. Max file size: 2MB.
+                </p>
+              </div>
+            </div>
+
+            {/* Form Fields */}
+            <form onSubmit={handleUpdateProfile} className="space-y-4 pt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700">Full Name *</label>
+                  <Input
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="Your Full Name"
+                    required
+                  />
                 </div>
 
-                <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                  Upload firm logo (mock)
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700">Email Address</label>
+                  <Input
+                    value={profile?.email || "admin@kotianandco.in"}
+                    disabled
+                    className="bg-slate-50 text-slate-500 cursor-not-allowed"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700">Role</label>
+                  <Input
+                    value={profile?.role ? profile.role.toUpperCase() : "ADMIN"}
+                    disabled
+                    className="bg-slate-50 text-slate-500 cursor-not-allowed"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700">Firm ID</label>
+                  <Input
+                    value={profile?.firm_id || "11111111-1111-1111-1111-111111111111"}
+                    disabled
+                    className="bg-slate-50 text-slate-500 font-mono text-xs cursor-not-allowed"
+                  />
                 </div>
               </div>
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Portal Branding</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Portal name</label>
-                  <Input value={portalName} onChange={(e) => setPortalName(e.target.value)} />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Custom domain</label>
-                  <Input value={customDomain} onChange={(e) => setCustomDomain(e.target.value)} />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Primary color</label>
-                  <Input value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} placeholder="#HEX" />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Client portal welcome message</label>
-                  <Textarea value={welcomeMessage} onChange={(e) => setWelcomeMessage(e.target.value)} />
+              <div className="flex justify-end pt-2">
+                <Button type="submit" disabled={isUpdatingProfile || profileLoading}>
+                  {isUpdatingProfile ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    "Save Profile"
+                  )}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
+        {/* Section 2: Change Password */}
+        <Card className="border-slate-200">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Lock className="h-5 w-5 text-slate-700" />
+              <CardTitle className="text-lg">Security &amp; Password</CardTitle>
+            </div>
+            <CardDescription>
+              Ensure your account is protected with a secure, unique password.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleChangePassword} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700">New Password</label>
+                  <Input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Min 8 characters"
+                    required
+                  />
                 </div>
 
-                <div className="rounded-md border p-3">
-                  <div className="font-medium">Preview</div>
-                  <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-3">
-                    <div className="font-semibold">Kotian & Co. Client Portal</div>
-                    <div className="text-sm text-slate-600">Secure document collection and compliance tracking.</div>
-                  </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700">Confirm New Password</label>
+                  <Input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter new password"
+                    required
+                  />
                 </div>
               </div>
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Reminder Settings</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm">Email reminders</div>
-                  <input type="checkbox" checked={emailReminders} onChange={(e) => setEmailReminders(e.target.checked)} />
+              <div className="rounded-lg bg-slate-50 p-3 border border-slate-100 text-xs text-slate-600 space-y-1">
+                <div className="font-semibold text-slate-700">Password Requirements:</div>
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className={`h-3.5 w-3.5 ${newPassword.length >= 8 ? "text-emerald-600" : "text-slate-400"}`} />
+                  At least 8 characters
                 </div>
-                <div className="flex items-center justify-between">
-                  <div className="text-sm">WhatsApp reminder template</div>
-                  <input type="checkbox" checked={whatsappTemplateEnabled} onChange={(e) => setWhatsappTemplateEnabled(e.target.checked)} />
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className={`h-3.5 w-3.5 ${/[A-Z]/.test(newPassword) && /[a-z]/.test(newPassword) ? "text-emerald-600" : "text-slate-400"}`} />
+                  Upper &amp; lowercase letters
                 </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Reminder frequency</label>
-                  <Select value={reminderFrequency} onValueChange={setReminderFrequency}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Every 2 days" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectLabel>Frequency</SelectLabel>
-                        <SelectItem value="2">Every 2 days</SelectItem>
-                        <SelectItem value="3">Every 3 days</SelectItem>
-                        <SelectItem value="7">Weekly</SelectItem>
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Escalate overdue documents after</label>
-                  <Select value={escalationDays} onValueChange={setEscalationDays}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="3 days" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectLabel>Escalation</SelectLabel>
-                        <SelectItem value="3">3 days</SelectItem>
-                        <SelectItem value="5">5 days</SelectItem>
-                        <SelectItem value="7">7 days</SelectItem>
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Default reminder message</label>
-                  <Textarea value={reminderMessage} onChange={(e) => setReminderMessage(e.target.value)} />
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className={`h-3.5 w-3.5 ${/[0-9]/.test(newPassword) ? "text-emerald-600" : "text-slate-400"}`} />
+                  At least one numeric digit
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        </section>
 
-        <section className="grid gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Engagement Templates</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {templates.map((t) => (
-                  <div key={t.name} className="flex items-center justify-between rounded-md border px-3 py-2">
-                    <div>
-                      <div className="font-medium">{t.name}</div>
-                      <div className="text-sm text-slate-600">{t.checkCount} checklist items</div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Badge>{t.type}</Badge>
-                      <Button size="sm" variant="outline" onClick={handleTemplateEdit}>Edit</Button>
-                    </div>
-                  </div>
-                ))}
+              <div className="flex justify-end pt-2">
+                <Button type="submit" disabled={isUpdatingPassword}>
+                  {isUpdatingPassword ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Updating Password...
+                    </>
+                  ) : (
+                    "Update Password"
+                  )}
+                </Button>
               </div>
-            </CardContent>
-          </Card>
+            </form>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Staff Members</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {staff.map((s) => (
-                  <div key={s.email} className="flex items-center justify-between rounded-md border px-3 py-2">
-                    <div>
-                      <div className="font-medium">{s.name}</div>
-                      <div className="text-sm text-slate-600">{s.role} • {s.email}</div>
-                    </div>
-                    <Badge variant="secondary">Active</Badge>
-                  </div>
-                ))}
-                <div className="mt-3">
-                  <Button onClick={handleInvite}>Invite Staff</Button>
-                </div>
+        {/* Section 3: Firm Information */}
+        <Card className="border-slate-200 bg-slate-50/50">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Building className="h-5 w-5 text-slate-700" />
+              <CardTitle className="text-lg">Firm Subscription &amp; Workspace</CardTitle>
+            </div>
+            <CardDescription>
+              Organization-wide license and workspace information (Read-only).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+              <div className="rounded-lg bg-white p-3 border border-slate-200">
+                <div className="text-xs text-slate-500">Firm Name</div>
+                <div className="font-semibold text-slate-900 mt-0.5">Kotian &amp; Co.</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">Chartered Accountants</div>
               </div>
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Security & Access</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between"><div>Role-based access</div><div>✅</div></div>
-                <div className="flex items-center justify-between"><div>Client-only portal access</div><div>✅</div></div>
-                <div className="flex items-center justify-between"><div>Audit logs</div><div>✅</div></div>
-                <div className="flex items-center justify-between"><div>Secure document storage</div><div>✅</div></div>
-                <div className="flex items-center justify-between"><div>Payment link tracking</div><div>✅</div></div>
+              <div className="rounded-lg bg-white p-3 border border-slate-200">
+                <div className="text-xs text-slate-500">Active Plan</div>
+                <div className="font-semibold text-emerald-700 mt-0.5">Growth Workspace</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">Unlimited Clients &amp; Storage</div>
               </div>
-            </CardContent>
-          </Card>
-        </section>
 
-        <section className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Danger Zone</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>Export workspace data</div>
-                  <Button variant="outline" onClick={() => handleDanger("export")}>Export</Button>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="text-sm text-destructive">Deactivate workspace</div>
-                  <Button variant="destructive" onClick={() => handleDanger("deactivate")}>Deactivate</Button>
-                </div>
+              <div className="rounded-lg bg-white p-3 border border-slate-200">
+                <div className="text-xs text-slate-500">Member Since</div>
+                <div className="font-semibold text-slate-900 mt-0.5">January 2024</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">Enterprise Vault Tier</div>
               </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Workspace Info</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2 text-sm text-slate-600">
-                <div><strong>Firm:</strong> Kotian & Co.</div>
-                <div><strong>Portal:</strong> CA Compliance Vault</div>
-                <div><strong>Admin:</strong> Adithya Kotian</div>
-              </div>
-            </CardContent>
-          </Card>
-        </section>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </DashboardShell>
   );

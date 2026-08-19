@@ -1,275 +1,323 @@
-"use client"
+"use client";
 
-import { useEffect, useMemo, useState } from "react";
-// Link not used in this page
-import DashboardShell from "../../components/layout/dashboard-shell";
-import { Button } from "../../components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
-import { Input } from "../../components/ui/input";
-import { Textarea } from "../../components/ui/textarea";
+import React, { useEffect, useMemo, useState } from "react";
+import DashboardShell from "@/components/layout/dashboard-shell";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "../../components/ui/dialog";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
-} from "../../components/ui/select";
-import { Badge } from "../../components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { ClipboardCopy, Search, PlusCircle, Link as LinkIcon } from "lucide-react";
+} from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Search,
+  Plus,
+  Edit2,
+  Trash2,
+  CheckCircle2,
+  Loader2,
+  Copy,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase/client";
+import InvoiceFormDialog, {
+  InvoiceRow,
+  ClientOption,
+  EngagementOption,
+  INVOICE_STATUSES,
+} from "@/components/invoices/invoice-form";
 
-type ClientRow = {
-  id: string;
-  firm_id: string | null;
-  name: string;
-  email: string | null;
-  phone: string | null;
-  pan: string | null;
-  gstin: string | null;
-  address: string | null;
-  risk_level: string | null;
-  created_at: string | null;
-};
+const FIRM_ID = "11111111-1111-1111-1111-111111111111";
 
-type EngagementRow = {
-  id: string;
-  firm_id: string | null;
-  client_id: string;
-  title: string;
-  type: string;
-  status: string;
-  risk: string | null;
-  due_date: string | null;
-  priority: string | null;
-  created_at: string | null;
-};
+function fmtINR(amount?: number | null) {
+  if (amount === undefined || amount === null) return "₹0";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
 
-type InvoiceStatus = "Draft" | "Sent" | "Paid" | "Overdue";
+function formatDate(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
 
-type InvoiceRow = {
-  id: string;
-  firm_id: string | null;
-  client_id: string;
-  engagement_id: string | null;
-  invoice_number: string;
-  number?: string;
-  amount: number;
-  status: InvoiceStatus;
-  due_date: string | null;
-  payment_link: string | null;
-  issued_at: string | null;
-  created_at: string | null;
-};
-
-type InvoiceFilter = "All" | InvoiceStatus;
-const invoiceStatuses: InvoiceFilter[] = ["All", "Draft", "Sent", "Paid", "Overdue"];
-
-const formatINR = (amount: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
-
-const formatDate = (date?: string) => {
-  if (!date) return "-";
-  const parsed = new Date(date);
-  return Number.isNaN(parsed.getTime()) ? "-" : parsed.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-};
-
-const statusVariant = (status: InvoiceStatus) => {
-  if (status === "Paid") return "secondary" as const;
-  if (status === "Overdue") return "destructive" as const;
-  if (status === "Draft") return "outline" as const;
-  return "default" as const;
-};
+function getStatusBadge(status: string) {
+  const s = status.toLowerCase();
+  if (s === "paid") {
+    return (
+      <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">
+        Paid
+      </Badge>
+    );
+  }
+  if (s === "overdue") {
+    return (
+      <Badge className="bg-red-50 text-red-700 border-red-200 text-xs">
+        Overdue
+      </Badge>
+    );
+  }
+  if (s === "sent") {
+    return (
+      <Badge className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+        Sent
+      </Badge>
+    );
+  }
+  if (s === "cancelled") {
+    return (
+      <Badge variant="outline" className="text-slate-400 text-xs line-through">
+        Cancelled
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="secondary" className="text-xs">
+      Draft
+    </Badge>
+  );
+}
 
 export default function InvoicesPage() {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState<InvoiceFilter>("All");
-  const [selectedClientId] = useState<string>("all");
-  const [selectedEngagementId] = useState<string>("all");
-  const [newClientId, setNewClientId] = useState<string>("all");
-  const [newEngagementId, setNewEngagementId] = useState<string>("all");
-  const [invoiceNumber, setInvoiceNumber] = useState("");
-  const [amount, setAmount] = useState("0");
-  const [dueDate, setDueDate] = useState("");
-  const [paymentLink, setPaymentLink] = useState("");
-  const [invoiceNotes, setInvoiceNotes] = useState("");
-  const [clients, setClients] = useState<ClientRow[]>([]);
-  const [engagements, setEngagements] = useState<EngagementRow[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [clients, setClients] = useState<ClientOption[]>([]);
+  const [engagements, setEngagements] = useState<EngagementOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const load = async () => {
+  // Search & Filter
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [clientFilter, setClientFilter] = useState("All");
+
+  // Dialogs
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<InvoiceRow | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletingInvoice, setDeletingInvoice] = useState<InvoiceRow | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const loadData = async () => {
+    try {
       setLoading(true);
       setError(null);
 
-      const [clientsRes, engagementsRes, invoicesRes] = await Promise.all([
-        supabase.from("clients").select("*"),
-        supabase.from("engagements").select("*"),
-        supabase.from("invoices").select("*"),
+      const [invRes, clientsRes, engRes] = await Promise.all([
+        supabase.from("invoices").select("*").order("created_at", { ascending: false }),
+        supabase.from("clients").select("id, name").order("name", { ascending: true }),
+        supabase.from("engagements").select("id, client_id, title"),
       ]);
 
-      const fetchError = clientsRes.error || engagementsRes.error || invoicesRes.error;
-      if (fetchError) {
-        setError(fetchError.message);
-        setLoading(false);
-        return;
-      }
+      if (invRes.error) throw invRes.error;
+      if (clientsRes.error) throw clientsRes.error;
+      if (engRes.error) throw engRes.error;
 
-      const clientRows = (clientsRes.data ?? []) as ClientRow[];
-      const engagementRows = (engagementsRes.data ?? []) as EngagementRow[];
-      const invoiceRows = (invoicesRes.data ?? []) as InvoiceRow[];
-
-      setClients(clientRows);
-      setEngagements(engagementRows);
-      setInvoices(invoiceRows);
-      setNewClientId(clientRows[0]?.id ?? "all");
-      setNewEngagementId(engagementRows.find((engagement) => engagement.client_id === clientRows[0]?.id)?.id ?? "all");
+      setInvoices(invRes.data ?? []);
+      setClients(clientsRes.data ?? []);
+      setEngagements(engRes.data ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load invoices");
+    } finally {
       setLoading(false);
-    };
+    }
+  };
 
-    void load();
+  useEffect(() => {
+    void loadData();
   }, []);
 
-  // filteredEngagements not currently required in invoices page
+  const clientMap = useMemo(() => {
+    const map = new Map<string, string>();
+    clients.forEach((c) => map.set(c.id, c.name));
+    return map;
+  }, [clients]);
 
-  const filteredInvoices = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
-    return invoices.filter((invoice) => {
-      const engagement = invoice.engagement_id ? engagements.find((eng) => eng.id === invoice.engagement_id) : undefined;
-      const client = clients.find((clientRow) => clientRow.id === invoice.client_id);
-      if (selectedClientId !== "all" && invoice.client_id !== selectedClientId) return false;
-      if (selectedEngagementId !== "all" && invoice.engagement_id !== selectedEngagementId) return false;
-      if (statusFilter !== "All" && invoice.status !== statusFilter) return false;
-      if (!normalizedSearch) return true;
-      const values = [invoice.invoice_number ?? invoice.number ?? "", client?.name ?? "", engagement?.title ?? ""];
-      return values.some((value) => value.toLowerCase().includes(normalizedSearch));
+  const filtered = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+
+    return invoices.filter((inv) => {
+      if (statusFilter !== "All" && inv.status !== statusFilter) return false;
+      if (clientFilter !== "All" && inv.client_id !== clientFilter) return false;
+
+      if (q) {
+        const clientName = clientMap.get(inv.client_id) || "";
+        const matchNumber = inv.invoice_number.toLowerCase().includes(q);
+        const matchClient = clientName.toLowerCase().includes(q);
+        if (!matchNumber && !matchClient) return false;
+      }
+
+      return true;
     });
-  }, [searchTerm, selectedClientId, selectedEngagementId, statusFilter, invoices, engagements, clients]);
+  }, [invoices, searchQuery, statusFilter, clientFilter, clientMap]);
 
-  const followUpInvoices = useMemo(
-    () => invoices.filter((invoice) => invoice.status === "Sent" || invoice.status === "Overdue"),
-    [invoices]
-  );
+  // Financial Summaries
+  const totalBilled = invoices.reduce((sum, i) => {
+    const total = i.total_amount ?? (i.amount + (i.tax || 0));
+    return sum + total;
+  }, 0);
 
-  const totalInvoiced = useMemo(
-    () => invoices.reduce((sum, invoice) => sum + invoice.amount, 0),
-    [invoices]
-  );
+  const totalPaid = invoices
+    .filter((i) => i.status.toLowerCase() === "paid")
+    .reduce((sum, i) => {
+      const total = i.total_amount ?? (i.amount + (i.tax || 0));
+      return sum + total;
+    }, 0);
 
-  const unpaidAmount = useMemo(
-    () => invoices.filter((invoice) => invoice.status === "Sent").reduce((sum, invoice) => sum + invoice.amount, 0),
-    [invoices]
-  );
+  const totalOutstanding = invoices
+    .filter((i) => ["sent", "overdue"].includes(i.status.toLowerCase()))
+    .reduce((sum, i) => {
+      const total = i.total_amount ?? (i.amount + (i.tax || 0));
+      return sum + total;
+    }, 0);
 
-  const overdueAmount = useMemo(
-    () => invoices.filter((invoice) => invoice.status === "Overdue").reduce((sum, invoice) => sum + invoice.amount, 0),
-    [invoices]
-  );
+  const overdueCount = invoices.filter(
+    (i) => i.status.toLowerCase() === "overdue"
+  ).length;
 
-  const paidThisMonth = useMemo(
-    () => invoices
-      .filter((invoice) => {
-        if (invoice.status !== "Paid") return false;
-        if (!invoice.issued_at) return false;
-        const issued = new Date(invoice.issued_at);
-        const now = new Date();
-        return issued.getMonth() === now.getMonth() && issued.getFullYear() === now.getFullYear();
-      })
-      .reduce((sum, invoice) => sum + invoice.amount, 0),
-    [invoices]
-  );
+  const handleMarkAsPaid = async (invoice: InvoiceRow) => {
+    try {
+      const { error } = await supabase
+        .from("invoices")
+        .update({
+          status: "Paid",
+          payment_date: new Date().toISOString(),
+        })
+        .eq("id", invoice.id);
 
-  const invoiceEngagementOptions = useMemo(
-    () => engagements.filter((engagement) => engagement.client_id === newClientId),
-    [engagements, newClientId]
-  );
+      if (error) {
+        toast.error(error.message || "Failed to mark invoice as paid");
+        return;
+      }
 
-  const handleCopyLink = async (link?: string) => {
-    if (link) {
-      await navigator.clipboard.writeText(link);
-      toast.success("Payment link copied");
-    } else {
-      toast.error("No payment link attached");
+      await supabase.from("audit_logs").insert([
+        {
+          firm_id: FIRM_ID,
+          client_id: invoice.client_id,
+          engagement_id: invoice.engagement_id || null,
+          action: "invoice_marked_paid",
+          metadata: {
+            invoice_id: invoice.id,
+            invoice_number: invoice.invoice_number,
+          },
+          created_by: null,
+        },
+      ]);
+
+      setInvoices((prev) =>
+        prev.map((inv) =>
+          inv.id === invoice.id
+            ? { ...inv, status: "Paid", payment_date: new Date().toISOString() }
+            : inv
+        )
+      );
+      toast.success(`Invoice ${invoice.invoice_number} marked as Paid`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error updating invoice");
     }
   };
 
-  const handleMarkPaid = async (invoiceId: string) => {
-    if (!invoiceId) {
-      toast.error("Invoice id missing");
+  const handleCopyPaymentLink = (link?: string | null) => {
+    if (!link) {
+      toast.error("No payment link available");
       return;
     }
-    const FIRM_ID = "11111111-1111-1111-1111-111111111111";
+    navigator.clipboard.writeText(link);
+    toast.success("Payment link copied to clipboard");
+  };
+
+  const handleDelete = async () => {
+    if (!deletingInvoice) return;
+
+    setIsDeleting(true);
     try {
-      const { error } = await supabase.from("invoices").update({ status: "Paid" }).eq("id", invoiceId);
+      const { error } = await supabase
+        .from("invoices")
+        .delete()
+        .eq("id", deletingInvoice.id);
+
       if (error) {
-        toast.error(error.message || "Failed to mark paid");
+        toast.error(error.message || "Failed to delete invoice");
         return;
       }
-      await supabase.from("audit_logs").insert([{ firm_id: FIRM_ID, action: "invoice_marked_paid", metadata: { invoice_id: invoiceId }, created_by: null }]);
-      const { data: refreshed } = await supabase.from("invoices").select("*");
-      setInvoices((refreshed ?? []) as InvoiceRow[]);
-      toast.success("Invoice marked paid");
+
+      await supabase.from("audit_logs").insert([
+        {
+          firm_id: FIRM_ID,
+          client_id: deletingInvoice.client_id,
+          engagement_id: deletingInvoice.engagement_id || null,
+          action: "invoice_deleted",
+          metadata: {
+            invoice_id: deletingInvoice.id,
+            invoice_number: deletingInvoice.invoice_number,
+          },
+          created_by: null,
+        },
+      ]);
+
+      await loadData();
+      setDeleteOpen(false);
+      setDeletingInvoice(null);
+      toast.success("Invoice deleted successfully");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Mark paid error";
-      toast.error(message);
+      toast.error(err instanceof Error ? err.message : "Deletion failed");
+    } finally {
+      setIsDeleting(false);
     }
-  };
-
-  const handleCreateInvoice = () => {
-    (async () => {
-      if (!invoiceNumber.trim() || !amount) {
-        toast.error("Invoice number and amount are required");
-        return;
-      }
-      const FIRM_ID = "11111111-1111-1111-1111-111111111111";
-      try {
-        const { data: created, error } = await supabase.from("invoices").insert([{ firm_id: FIRM_ID, client_id: newClientId, engagement_id: newEngagementId === "all" ? null : newEngagementId, invoice_number: invoiceNumber.trim(), amount: Number(amount), due_date: dueDate || null, payment_link: paymentLink || null, status: "Sent" }]).select().single();
-        if (error) {
-          toast.error(error.message || "Failed to create invoice");
-          return;
-        }
-        await supabase.from("audit_logs").insert([{ firm_id: FIRM_ID, client_id: newClientId, engagement_id: newEngagementId === "all" ? null : newEngagementId, action: "invoice_created", metadata: { invoice_id: created.id }, created_by: null }]);
-        const { data: refreshed } = await supabase.from("invoices").select("*");
-        setInvoices((refreshed ?? []) as InvoiceRow[]);
-        toast.success("Invoice created");
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Invoice creation error";
-        toast.error(message);
-      }
-    })();
-  };
-
-  const handleNewClientChange = (clientId: string) => {
-    setNewClientId(clientId);
-    const firstEngagement = engagements.find((engagement) => engagement.client_id === clientId);
-    setNewEngagementId(firstEngagement?.id ?? "all");
   };
 
   if (loading) {
     return (
       <DashboardShell>
         <div className="space-y-6">
-          <header className="flex items-center justify-between rounded-3xl border border-slate-200 bg-white px-6 py-6 shadow-sm shadow-slate-200/50">
+          <header className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-6 py-6 shadow-sm">
             <div>
-              <h1 className="text-2xl font-semibold text-slate-900">Invoices</h1>
-              <p className="text-sm text-slate-600">Loading invoice data from Supabase.</p>
+              <h1 className="text-2xl font-bold text-slate-900">Invoices &amp; Billing</h1>
+              <p className="text-sm text-slate-500">Loading financial records...</p>
             </div>
           </header>
+
+          <div className="grid gap-4 md:grid-cols-4">
+            {[1, 2, 3, 4].map((i) => (
+              <Card key={i} className="animate-pulse">
+                <CardHeader>
+                  <div className="h-4 w-28 rounded bg-slate-200" />
+                </CardHeader>
+                <CardContent>
+                  <div className="h-7 w-20 rounded bg-slate-200" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </div>
       </DashboardShell>
     );
@@ -278,13 +326,16 @@ export default function InvoicesPage() {
   if (error) {
     return (
       <DashboardShell>
-        <div className="mx-auto max-w-3xl py-24">
-          <Card>
+        <div className="mx-auto max-w-2xl py-16 text-center">
+          <Card className="border-red-200 bg-red-50">
             <CardHeader>
-              <CardTitle>Unable to load invoices</CardTitle>
+              <CardTitle className="text-red-800">Unable to load invoices</CardTitle>
             </CardHeader>
-            <CardContent>
-              <p className="text-sm text-slate-600">{error}</p>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-red-600">{error}</p>
+              <Button onClick={() => void loadData()} variant="outline">
+                Retry
+              </Button>
             </CardContent>
           </Card>
         </div>
@@ -295,284 +346,302 @@ export default function InvoicesPage() {
   return (
     <DashboardShell>
       <div className="space-y-6">
-        <section className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white px-6 py-6 shadow-sm shadow-slate-200/50 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-3">
-            <div className="text-sm font-medium uppercase tracking-[0.24em] text-slate-500">Invoices</div>
-            <div className="space-y-2">
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Invoices</h1>
-              <p className="max-w-2xl text-sm leading-6 text-slate-600">
-                Track unpaid invoices, overdue payments, and payment links across every client engagement.
-              </p>
-            </div>
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+              Invoices &amp; Billing
+            </h1>
+            <p className="text-sm text-slate-500">
+              Manage client billing, retainers, GST tax calculations, and payment statuses.
+            </p>
           </div>
+          <Button
+            onClick={() => {
+              setEditingInvoice(null);
+              setFormOpen(true);
+            }}
+            className="gap-2"
+          >
+            <Plus className="h-4 w-4" />
+            Create Invoice
+          </Button>
+        </header>
 
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button size="lg" className="inline-flex items-center gap-2">
-                <PlusCircle className="h-4 w-4" />
-                Create Invoice
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>Create Invoice</DialogTitle>
-                <DialogDescription>
-                  This is a mock invoice creation flow. The saved invoice will connect to Supabase later.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 pt-2">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Client</label>
-                    <Select value={newClientId} onValueChange={handleNewClientChange}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Select client" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectLabel>Client</SelectLabel>
-                          {clients.map((client) => (
-                            <SelectItem key={client.id} value={client.id}>{client.name}</SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Engagement</label>
-                    <Select value={newEngagementId} onValueChange={setNewEngagementId}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Select engagement" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectLabel>Engagement</SelectLabel>
-                          {invoiceEngagementOptions.length > 0 ? (
-                            invoiceEngagementOptions.map((engagement) => (
-                              <SelectItem key={engagement.id} value={engagement.id}>{engagement.title}</SelectItem>
-                            ))
-                          ) : (
-                            <SelectItem value="all" disabled>No engagements available</SelectItem>
-                          )}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Invoice number</label>
-                    <Input value={invoiceNumber} onChange={(event) => setInvoiceNumber(event.target.value)} placeholder="Enter invoice number" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Amount</label>
-                    <Input type="number" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0" />
-                  </div>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Due date</label>
-                    <Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Payment link</label>
-                    <Input value={paymentLink} onChange={(event) => setPaymentLink(event.target.value)} placeholder="https://" />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700">Notes</label>
-                  <Textarea value={invoiceNotes} onChange={(event) => setInvoiceNotes(event.target.value)} placeholder="Any additional invoice notes" />
-                </div>
+        {/* Summary Metric Cards */}
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card className="border-slate-200">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-slate-500">
+                Total Billed
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-slate-900">
+                {fmtINR(totalBilled)}
               </div>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button className="w-full" onClick={handleCreateInvoice}>Create Invoice</Button>
-                </DialogClose>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </section>
+            </CardContent>
+          </Card>
 
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Total Invoiced</CardTitle>
+          <Card className="border-slate-200">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-slate-500">
+                Collected / Paid
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-3xl font-semibold text-slate-900">{formatINR(totalInvoiced)}</p>
-              <CardDescription>All invoices generated across clients.</CardDescription>
+              <div className="text-2xl font-bold text-emerald-600">
+                {fmtINR(totalPaid)}
+              </div>
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Unpaid Amount</CardTitle>
+
+          <Card className="border-slate-200">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-slate-500">
+                Outstanding Balance
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-3xl font-semibold text-slate-900">{formatINR(unpaidAmount)}</p>
-              <CardDescription>Amount billed and awaiting payment.</CardDescription>
+              <div className="text-2xl font-bold text-amber-600">
+                {fmtINR(totalOutstanding)}
+              </div>
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Overdue Amount</CardTitle>
+
+          <Card className="border-slate-200">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-slate-500">
+                Overdue Invoices
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-3xl font-semibold text-slate-900">{formatINR(overdueAmount)}</p>
-              <CardDescription>Past due invoices requiring follow-up.</CardDescription>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Paid This Month</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-semibold text-slate-900">{formatINR(paidThisMonth)}</p>
-              <CardDescription>Invoices paid in the current month.</CardDescription>
+              <div className="text-2xl font-bold text-red-600">
+                {overdueCount}
+              </div>
             </CardContent>
           </Card>
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-[1.4fr_0.6fr]">
-          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/50">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-2">
-                <div className="rounded-2xl bg-slate-100 p-2 text-slate-500">
-                  <Search className="h-4 w-4" />
-                </div>
-                <Input
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder="Search invoices, clients, engagements..."
-                  className="min-w-0"
-                />
-              </div>
+        {/* Search & Filters */}
+        <section className="flex flex-col gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="relative md:col-span-2">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <Input
+                placeholder="Search invoice number or client..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 bg-white"
+              />
             </div>
-          </div>
-          <div className="grid gap-3">
-            <div className="flex flex-wrap gap-2 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/50">
-              {invoiceStatuses.map((status) => (
-                <Button
-                  key={status}
-                  variant={statusFilter === status ? "secondary" : "outline"}
-                  size="sm"
-                  onClick={() => setStatusFilter(status)}
-                >
-                  {status}
-                </Button>
-              ))}
-            </div>
-          </div>
-        </section>
 
-        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm shadow-slate-200/50">
-          <CardHeader className="px-6 py-5">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <CardTitle>Invoice Ledger</CardTitle>
-                <CardDescription>View current billing status and payment links for every engagement.</CardDescription>
-              </div>
-              <div className="text-sm text-slate-500">{filteredInvoices.length} results</div>
+            <div>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="bg-white">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="All">All Statuses</SelectItem>
+                  {INVOICE_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          </CardHeader>
-          <CardContent className="px-0 pb-0 pt-0">
-            {filteredInvoices.length === 0 ? (
-              <div className="p-8 text-center text-sm text-slate-500">No invoices found.</div>
-            ) : (
-              <Table className="min-w-full">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Invoice Number</TableHead>
-                    <TableHead>Client</TableHead>
-                    <TableHead>Engagement</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Due Date</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Payment Link</TableHead>
-                    <TableHead>Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredInvoices.map((invoice) => {
-                    const client = clients.find((clientRow) => clientRow.id === invoice.client_id);
-                    const engagement = invoice.engagement_id ? engagements.find((eng) => eng.id === invoice.engagement_id) : undefined;
-                    return (
-                      <TableRow key={invoice.id}>
-                        <TableCell className="font-medium text-slate-900">{invoice.invoice_number ?? invoice.number ?? "—"}</TableCell>
-                        <TableCell>{client?.name ?? "Unknown"}</TableCell>
-                        <TableCell>{engagement?.title ?? "—"}</TableCell>
-                        <TableCell>{formatINR(invoice.amount)}</TableCell>
-                        <TableCell>{formatDate(invoice.due_date as string | undefined)}</TableCell>
-                        <TableCell><Badge variant={statusVariant(invoice.status)}>{invoice.status}</Badge></TableCell>
-                        <TableCell>
-                          {invoice.payment_link ? (
-                            <Badge variant="outline" className="inline-flex items-center gap-1"><LinkIcon className="h-3.5 w-3.5" />Link</Badge>
-                          ) : (
-                            "—"
-                          )}
-                        </TableCell>
-                        <TableCell className="space-x-2">
-                          <Button size="sm" variant="outline" onClick={() => handleCopyLink(invoice.payment_link as string | undefined)}>Copy Link</Button>
-                          <Button size="sm" onClick={() => handleMarkPaid(invoice.id)}>Mark Paid</Button>
+
+            <div>
+              <Select value={clientFilter} onValueChange={setClientFilter}>
+                <SelectTrigger className="bg-white">
+                  <SelectValue placeholder="Client" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="All">All Clients</SelectItem>
+                  {clients.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Invoices Table */}
+          <Card className="border-slate-200 overflow-hidden">
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-slate-50">
+                      <TableHead className="font-semibold text-slate-700">Invoice Number</TableHead>
+                      <TableHead className="font-semibold text-slate-700">Client</TableHead>
+                      <TableHead className="font-semibold text-slate-700">Base Amount</TableHead>
+                      <TableHead className="font-semibold text-slate-700">GST (Tax)</TableHead>
+                      <TableHead className="font-semibold text-slate-700">Total</TableHead>
+                      <TableHead className="font-semibold text-slate-700">Status</TableHead>
+                      <TableHead className="font-semibold text-slate-700">Due Date</TableHead>
+                      <TableHead className="font-semibold text-slate-700 text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={8}
+                          className="text-center py-12 text-slate-500 text-sm"
+                        >
+                          No invoices found matching your filters.
                         </TableCell>
                       </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
+                    ) : (
+                      filtered.map((inv) => {
+                        const clientName = clientMap.get(inv.client_id) || "Unknown Client";
+                        const tax = inv.tax ?? Math.round(inv.amount * 0.18);
+                        const total = inv.total_amount ?? (inv.amount + tax);
+                        const isPaid = inv.status.toLowerCase() === "paid";
+
+                        return (
+                          <TableRow key={inv.id} className="hover:bg-slate-50/80">
+                            <TableCell>
+                              <div className="font-mono font-semibold text-slate-900">
+                                {inv.invoice_number}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-sm font-medium text-slate-800">
+                                {clientName}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-xs text-slate-600">
+                                {fmtINR(inv.amount)}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-xs text-slate-500">
+                                {fmtINR(tax)}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-sm font-bold text-slate-900">
+                                {fmtINR(total)}
+                              </span>
+                            </TableCell>
+                            <TableCell>{getStatusBadge(inv.status)}</TableCell>
+                            <TableCell>
+                              <span className="text-xs text-slate-600">
+                                {formatDate(inv.due_date)}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                {!isPaid && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-8 px-2 text-xs text-emerald-600 hover:bg-emerald-50"
+                                    onClick={() => handleMarkAsPaid(inv)}
+                                    title="Mark as Paid"
+                                  >
+                                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                                    Mark Paid
+                                  </Button>
+                                )}
+                                {inv.payment_link && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-8 w-8 p-0"
+                                    onClick={() => handleCopyPaymentLink(inv.payment_link)}
+                                    title="Copy Payment Link"
+                                  >
+                                    <Copy className="h-3.5 w-3.5 text-slate-500" />
+                                    <span className="sr-only">Copy Link</span>
+                                  </Button>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-8 w-8 p-0 hover:bg-slate-100"
+                                  onClick={() => {
+                                    setEditingInvoice(inv);
+                                    setFormOpen(true);
+                                  }}
+                                  title="Edit Invoice"
+                                >
+                                  <Edit2 className="h-4 w-4 text-slate-600" />
+                                  <span className="sr-only">Edit</span>
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-8 w-8 p-0 hover:bg-red-50 hover:text-red-600"
+                                  onClick={() => {
+                                    setDeletingInvoice(inv);
+                                    setDeleteOpen(true);
+                                  }}
+                                  title="Delete Invoice"
+                                >
+                                  <Trash2 className="h-4 w-4 text-red-500" />
+                                  <span className="sr-only">Delete</span>
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
         </section>
 
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm shadow-slate-200/50">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-xl font-semibold text-slate-900">Payment Follow-ups</h2>
-              <p className="text-sm text-slate-600">Invoices that need a client payment reminder.</p>
-            </div>
-            <Badge variant="outline">{followUpInvoices.length} pending</Badge>
-          </div>
-          <div className="mt-6 space-y-4">
-            {followUpInvoices.length === 0 ? (
-              <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">No pending payment follow-ups.</div>
-            ) : (
-              followUpInvoices.map((invoice) => {
-                const client = clients.find((clientRow) => clientRow.id === invoice.client_id);
-                const message = `Hi ${client?.name ?? "Client"}, payment for invoice ${invoice.invoice_number ?? invoice.number ?? "#"} amounting to ${formatINR(invoice.amount)} is pending. Please complete the payment using your CA Compliance Vault portal/payment link.`;
-                return (
-                  <div key={invoice.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                      <div className="space-y-2">
-                        <div className="text-sm text-slate-500">{client?.name ?? "Unknown client"}</div>
-                        <div className="text-base font-medium text-slate-900">Invoice {invoice.invoice_number ?? invoice.number ?? "—"}</div>
-                        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                          <span>{formatINR(invoice.amount)}</span>
-                          <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">Due {formatDate(invoice.due_date as string | undefined)}</span>
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-start gap-3 sm:items-end">
-                        <Badge variant={statusVariant(invoice.status)}>{invoice.status}</Badge>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={async () => {
-                            await navigator.clipboard.writeText(message);
-                            toast.success("Payment reminder copied");
-                          }}
-                        >
-                          <ClipboardCopy className="mr-2 h-4 w-4" />
-                          Copy Payment Reminder
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </section>
+        {/* Invoice Form Dialog */}
+        <InvoiceFormDialog
+          open={formOpen}
+          onOpenChange={setFormOpen}
+          invoiceToEdit={editingInvoice}
+          clients={clients}
+          engagements={engagements}
+          invoiceCount={invoices.length}
+          onSuccess={() => void loadData()}
+        />
+
+        {/* Delete Confirmation Alert Dialog */}
+        <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Invoice?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to permanently delete invoice{" "}
+                <span className="font-semibold text-slate-900">
+                  {deletingInvoice?.invoice_number}
+                </span>
+                ? This will remove the record from billing accounts.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Deleting...
+                  </>
+                ) : (
+                  "Delete Invoice"
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </DashboardShell>
   );
