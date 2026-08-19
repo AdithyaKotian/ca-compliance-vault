@@ -1,6 +1,6 @@
 # CA Compliance Vault
 
-A production-grade SaaS platform for Chartered Accountant (CA) firms to manage clients, compliance engagements, documents, invoices, and client communication.
+A full-stack portfolio project: a compliance management platform for Chartered Accountant (CA) firms, built to manage clients, compliance engagements, documents, invoices, and client communication.
 
 ## 🚀 Live Demo
 
@@ -210,14 +210,13 @@ npm run start
 - **2** storage buckets
 - **50+** features
 
-## 🧪 Testing
+## 🧪 Code Quality
 
 - ESLint: 0 errors, 0 warnings
-- TypeScript: 0 errors
-- Build: Successfully compiled
-- No console.log statements
-- No TODO comments
-- No `any` types
+- TypeScript: strict mode, 0 errors
+- Build: compiles cleanly
+
+No automated test suite yet (unit/integration tests are the next thing I'd add).
 
 ## 📝 License
 
