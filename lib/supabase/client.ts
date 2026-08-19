@@ -7,4 +7,14 @@ if (!supabaseUrl || !supabasePublishableKey) {
   throw new Error("Missing Supabase environment variables");
 }
 
-export const supabase = createBrowserClient(supabaseUrl, supabasePublishableKey);
+export const supabase = createBrowserClient(
+  supabaseUrl,
+  supabasePublishableKey,
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  }
+);

@@ -3,6 +3,16 @@
 import React from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  format,
+  addMonths,
+  subMonths,
+  startOfMonth,
+  endOfMonth,
+  eachDayOfInterval,
+  getDay,
+  isToday,
+} from "date-fns";
 
 export type CalendarEventItem = {
   id: string;
@@ -24,21 +34,6 @@ interface CalendarViewProps {
   onDateClick: (dateStr: string) => void;
   onEventClick?: (event: CalendarEventItem) => void;
 }
-
-const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -69,67 +64,62 @@ export default function CalendarView({
   onDateClick,
   onEventClick,
 }: CalendarViewProps) {
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
-
   const handlePrevMonth = () => {
-    onNavigate(new Date(year, month - 1, 1));
+    onNavigate(subMonths(currentDate, 1));
   };
 
   const handleNextMonth = () => {
-    onNavigate(new Date(year, month + 1, 1));
+    onNavigate(addMonths(currentDate, 1));
   };
 
   const handleToday = () => {
     onNavigate(new Date());
   };
 
-  // Calendar matrix calculation
-  const firstDayOfMonth = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const daysInPrevMonth = new Date(year, month, 0).getDate();
+  const monthStart = startOfMonth(currentDate);
+  const monthEnd = endOfMonth(currentDate);
+  const daysInCurrentMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
 
-  // Create grid cells
-  const calendarCells = [];
-
-  // Previous month trailing days
-  for (let i = firstDayOfMonth - 1; i >= 0; i--) {
-    const day = daysInPrevMonth - i;
-    const dateStr = new Date(year, month - 1, day).toISOString().split("T")[0];
-    calendarCells.push({
-      day,
-      dateStr,
+  // Leading days from previous month
+  const startDayOfWeek = getDay(monthStart);
+  const leadingDays = [];
+  for (let i = startDayOfWeek - 1; i >= 0; i--) {
+    const d = new Date(monthStart);
+    d.setDate(d.getDate() - (i + 1));
+    leadingDays.push({
+      day: d.getDate(),
+      dateStr: format(d, "yyyy-MM-dd"),
       isCurrentMonth: false,
       isToday: false,
     });
   }
-
-  const todayStr = new Date().toISOString().split("T")[0];
 
   // Current month days
-  for (let day = 1; day <= daysInMonth; day++) {
-    const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    calendarCells.push({
-      day,
-      dateStr,
-      isCurrentMonth: true,
-      isToday: dateStr === todayStr,
-    });
-  }
+  const currentMonthCells = daysInCurrentMonth.map((d) => ({
+    day: d.getDate(),
+    dateStr: format(d, "yyyy-MM-dd"),
+    isCurrentMonth: true,
+    isToday: isToday(d),
+  }));
 
-  // Next month leading days
-  const remainingCells = 42 - calendarCells.length;
-  for (let day = 1; day <= remainingCells; day++) {
-    const dateStr = new Date(year, month + 1, day).toISOString().split("T")[0];
-    calendarCells.push({
-      day,
-      dateStr,
+  // Trailing days from next month to fill 6 weeks (42 cells)
+  const totalCellsSoFar = leadingDays.length + currentMonthCells.length;
+  const trailingCount = 42 - totalCellsSoFar;
+  const trailingDays = [];
+  for (let i = 1; i <= trailingCount; i++) {
+    const d = new Date(monthEnd);
+    d.setDate(d.getDate() + i);
+    trailingDays.push({
+      day: d.getDate(),
+      dateStr: format(d, "yyyy-MM-dd"),
       isCurrentMonth: false,
       isToday: false,
     });
   }
 
-  // Group events by date (YYYY-MM-DD)
+  const calendarCells = [...leadingDays, ...currentMonthCells, ...trailingDays];
+
+  // Group events by date (yyyy-MM-dd)
   const eventsByDate = new Map<string, CalendarEventItem[]>();
   events.forEach((ev) => {
     const datePart = ev.start_time ? ev.start_time.split("T")[0] : "";
@@ -146,54 +136,46 @@ export default function CalendarView({
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border-b border-slate-200 bg-slate-50/60">
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold text-slate-900">
-            {MONTH_NAMES[month]} {year}
+            {format(currentDate, "MMMM yyyy")}
           </h2>
-          <Button variant="outline" size="sm" onClick={handleToday} className="h-8 text-xs bg-white">
+          <Button variant="outline" size="sm" onClick={handleToday} className="text-xs h-8">
             Today
           </Button>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Legend */}
-          <div className="hidden lg:flex items-center gap-3 mr-4 text-xs">
-            <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
-              <span className="text-slate-600">Deadline</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-blue-500" />
-              <span className="text-slate-600">Meeting</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-              <span className="text-slate-600">Task</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
-              <span className="text-slate-600">Reminder</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-purple-500" />
-              <span className="text-slate-600">Invoice</span>
-            </div>
+          {/* Legend Badges */}
+          <div className="hidden md:flex items-center gap-2 mr-2 text-xs">
+            <span className="flex items-center gap-1 text-slate-600">
+              <span className="h-2 w-2 rounded-full bg-red-500" /> Deadline
+            </span>
+            <span className="flex items-center gap-1 text-slate-600">
+              <span className="h-2 w-2 rounded-full bg-blue-500" /> Meeting
+            </span>
+            <span className="flex items-center gap-1 text-slate-600">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" /> Task
+            </span>
+            <span className="flex items-center gap-1 text-slate-600">
+              <span className="h-2 w-2 rounded-full bg-purple-500" /> Invoice
+            </span>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center rounded-lg border border-slate-200 bg-white">
             <Button
-              variant="outline"
-              size="sm"
-              className="h-8 w-8 p-0 bg-white"
+              variant="ghost"
+              size="icon"
               onClick={handlePrevMonth}
-              title="Previous Month"
+              className="h-8 w-8 rounded-r-none border-r border-slate-200"
+              aria-label="Previous month"
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <Button
-              variant="outline"
-              size="sm"
-              className="h-8 w-8 p-0 bg-white"
+              variant="ghost"
+              size="icon"
               onClick={handleNextMonth}
-              title="Next Month"
+              className="h-8 w-8 rounded-l-none"
+              aria-label="Next month"
             >
               <ChevronRight className="h-4 w-4" />
             </Button>
@@ -201,47 +183,55 @@ export default function CalendarView({
         </div>
       </div>
 
-      {/* Weekday Header */}
-      <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-100/70 text-center text-xs font-semibold text-slate-700 py-2">
-        {DAY_NAMES.map((d) => (
-          <div key={d}>{d}</div>
+      {/* Weekday Labels Header */}
+      <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-100/70 text-center text-xs font-semibold text-slate-600">
+        {DAY_NAMES.map((name, idx) => (
+          <div
+            key={name}
+            className={`py-2.5 ${idx === 0 || idx === 6 ? "text-slate-400" : ""}`}
+          >
+            {name}
+          </div>
         ))}
       </div>
 
-      {/* Calendar Month Grid */}
-      <div className="grid grid-cols-7 grid-rows-6 auto-rows-fr divide-x divide-y divide-slate-200 min-h-[580px]">
-        {calendarCells.map((cell, idx) => {
+      {/* 42-Cell Monthly Days Grid */}
+      <div className="grid grid-cols-7 auto-rows-fr divide-x divide-y divide-slate-100 bg-slate-50/20">
+        {calendarCells.map((cell, index) => {
           const dayEvents = eventsByDate.get(cell.dateStr) || [];
-
           return (
             <div
-              key={idx}
+              key={`${cell.dateStr}-${index}`}
               onClick={() => onDateClick(cell.dateStr)}
-              className={`p-1.5 sm:p-2 min-h-[90px] flex flex-col justify-between transition-colors cursor-pointer hover:bg-slate-50/80 ${
-                cell.isCurrentMonth ? "bg-white" : "bg-slate-50/40 text-slate-400"
+              className={`min-h-[105px] p-1.5 transition-colors cursor-pointer flex flex-col justify-between group ${
+                cell.isCurrentMonth
+                  ? "bg-white hover:bg-slate-50/80"
+                  : "bg-slate-50/50 text-slate-400 hover:bg-slate-100/60"
               }`}
             >
-              <div className="flex items-center justify-between mb-1">
+              {/* Day Number Header */}
+              <div className="flex items-center justify-between">
                 <span
-                  className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium ${
+                  className={`inline-flex items-center justify-center text-xs font-medium rounded-full h-6 w-6 ${
                     cell.isToday
                       ? "bg-slate-900 text-white font-bold"
                       : cell.isCurrentMonth
-                      ? "text-slate-800"
-                      : "text-slate-400"
+                        ? "text-slate-800"
+                        : "text-slate-400"
                   }`}
                 >
                   {cell.day}
                 </span>
+
                 {dayEvents.length > 0 && (
-                  <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
-                    {dayEvents.length}
+                  <span className="text-[10px] text-slate-400 font-medium mr-1">
+                    {dayEvents.length} {dayEvents.length === 1 ? "item" : "items"}
                   </span>
                 )}
               </div>
 
-              {/* Event Pills */}
-              <div className="space-y-1 overflow-hidden">
+              {/* Day Event Pills */}
+              <div className="mt-1 space-y-1 overflow-hidden flex-1">
                 {dayEvents.slice(0, 3).map((ev) => (
                   <div
                     key={ev.id}
@@ -249,16 +239,17 @@ export default function CalendarView({
                       e.stopPropagation();
                       if (onEventClick) onEventClick(ev);
                     }}
-                    className={`rounded px-1.5 py-0.5 text-[10px] font-medium truncate leading-tight shadow-2xs ${getEventTypeColor(
-                      ev.event_type
-                    )}`}
                     title={`${ev.title} (${ev.event_type})`}
+                    className={`truncate rounded px-1.5 py-0.5 text-[11px] font-medium transition-all shadow-xs ${getEventTypeColor(
+                      ev.event_type
+                    )} hover:brightness-95`}
                   >
                     {ev.title}
                   </div>
                 ))}
+
                 {dayEvents.length > 3 && (
-                  <div className="text-[9px] text-slate-500 font-medium px-1">
+                  <div className="text-[10px] text-slate-500 font-medium pl-1">
                     +{dayEvents.length - 3} more
                   </div>
                 )}

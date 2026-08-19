@@ -114,6 +114,30 @@ export default function InvoiceFormDialog({
       const currentYear = new Date().getFullYear();
       const seq = String(invoiceCount + 1).padStart(4, "0");
       setInvoiceNumber(`INV-${currentYear}-${seq}`);
+
+      // Async query last invoice number to guarantee uniqueness
+      void (async () => {
+        try {
+          const { data: lastInvoice } = await supabase
+            .from("invoices")
+            .select("invoice_number")
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (lastInvoice?.invoice_number) {
+            const parts = lastInvoice.invoice_number.split("-");
+            const lastSeq = parseInt(parts[parts.length - 1], 10);
+            if (!isNaN(lastSeq)) {
+              const nextSeq = String(lastSeq + 1).padStart(4, "0");
+              setInvoiceNumber(`INV-${currentYear}-${nextSeq}`);
+            }
+          }
+        } catch {
+          // Keep default fallback
+        }
+      })();
+
       setAmount("");
       setTaxRate(18);
       setStatus("Sent");

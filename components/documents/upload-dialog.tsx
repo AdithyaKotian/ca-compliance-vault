@@ -133,6 +133,16 @@ export default function DocumentUploadDialog({
 
     setIsUploading(true);
     try {
+      // Verify storage bucket exists
+      const { data: buckets } = await supabase.storage.listBuckets();
+      const documentsBucket = buckets?.find((b) => b.name === "documents");
+
+      if (buckets && buckets.length > 0 && !documentsBucket) {
+        toast.error("Storage not configured. Please create 'documents' bucket in Supabase.");
+        setIsUploading(false);
+        return;
+      }
+
       const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
       const storagePath = `${selectedClientId}/${Date.now()}-${sanitizedName}`;
 

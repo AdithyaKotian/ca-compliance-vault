@@ -85,6 +85,16 @@ export default function SettingsPage() {
 
     setIsUploadingAvatar(true);
     try {
+      // Verify storage bucket exists
+      const { data: buckets } = await supabase.storage.listBuckets();
+      const avatarsBucket = buckets?.find((b) => b.name === "avatars");
+
+      if (buckets && buckets.length > 0 && !avatarsBucket) {
+        toast.error("Storage not configured. Please create 'avatars' bucket in Supabase.");
+        setIsUploadingAvatar(false);
+        return;
+      }
+
       const fileExt = file.name.split(".").pop();
       const filePath = `${profile.id}/avatar-${Date.now()}.${fileExt}`;
 

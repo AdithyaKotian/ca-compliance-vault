@@ -90,7 +90,11 @@ CREATE POLICY "Client users can view and update own checklist status" ON checkli
 -- 7. Documents Table Policies
 CREATE POLICY "Firm staff can manage documents" ON documents
   FOR ALL USING (
-    firm_id IN (SELECT firm_id FROM profiles WHERE id = auth.uid())
+    client_id IN (
+      SELECT id FROM clients WHERE firm_id IN (
+        SELECT firm_id FROM profiles WHERE id = auth.uid()
+      )
+    )
   );
 
 CREATE POLICY "Client users can view and upload own documents" ON documents
