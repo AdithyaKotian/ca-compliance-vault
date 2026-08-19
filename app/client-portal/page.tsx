@@ -150,11 +150,30 @@ export default function ClientPortalPage() {
       // Query profile to obtain client_id securely
       const { data: profile } = await supabase
         .from("profiles")
-        .select("client_id, role, full_name")
+        .select("*")
         .eq("id", user.id)
         .maybeSingle();
 
-      let targetClientId = profile?.client_id;
+      let targetClientId = profile?.client_id || null;
+
+      // If no client_id in profile, find client by email
+      if (!targetClientId && user.email) {
+        const { data: clientByEmail } = await supabase
+          .from("clients")
+          .select("id")
+          .eq("email", user.email)
+          .maybeSingle();
+
+        targetClientId = clientByEmail?.id || null;
+
+        // Auto-link client_id in profile for subsequent queries
+        if (targetClientId) {
+          await supabase
+            .from("profiles")
+            .update({ client_id: targetClientId, role: "client" })
+            .eq("id", user.id);
+        }
+      }
 
       // If user is firm admin previewing portal, resolve first available client
       if (!targetClientId && profile?.role !== "client") {
@@ -165,11 +184,11 @@ export default function ClientPortalPage() {
           .limit(1)
           .maybeSingle();
 
-        targetClientId = firstClient?.id;
+        targetClientId = firstClient?.id || null;
       }
 
       if (!targetClientId) {
-        setError("No client profile found for this account.");
+        setError("No client found for this account. Please contact your CA firm.");
         setLoading(false);
         return;
       }

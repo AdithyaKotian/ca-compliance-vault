@@ -48,24 +48,59 @@ export default function LoginPage() {
         return;
       }
 
-      // Fetch user profile to determine their configured role
+      // Try to get profile
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role")
+        .select("*")
         .eq("id", user.id)
         .maybeSingle();
 
-      const profileRole = profile?.role?.toLowerCase();
+      // If no profile exists, create one
+      if (!profile) {
+        await supabase
+          .from("profiles")
+          .insert([
+            {
+              id: user.id,
+              email: user.email,
+              full_name: user.email?.split("@")[0] || "User",
+              role: role,
+              client_id: null,
+              firm_id: "11111111-1111-1111-1111-111111111111",
+            },
+          ]);
+      }
 
-      if (profileRole === "client" || role === "client") {
-        toast.success("Welcome back! Redirecting to client portal...");
+      // Determine role from profile or selected role
+      const profileRole = profile?.role?.toLowerCase() || role;
+
+      // Redirect based on role
+      if (profileRole === "client") {
+        // For client, ensure client_id is linked in profile
+        if (user.email) {
+          const { data: clientData } = await supabase
+            .from("clients")
+            .select("id")
+            .eq("email", user.email)
+            .maybeSingle();
+
+          if (clientData?.id) {
+            await supabase
+              .from("profiles")
+              .update({ client_id: clientData.id, role: "client" })
+              .eq("id", user.id);
+          }
+        }
+
+        toast.success("Signed in — redirecting to client portal");
         router.push("/client-portal");
         router.refresh();
-      } else {
-        toast.success("Welcome back! Redirecting to dashboard...");
-        router.push("/dashboard");
-        router.refresh();
+        return;
       }
+
+      toast.success("Signed in — redirecting to dashboard");
+      router.push("/dashboard");
+      router.refresh();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Login failed";
       toast.error(message);
