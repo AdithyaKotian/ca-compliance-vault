@@ -111,6 +111,7 @@ export default function ClientPortalPage() {
   const { loading: profileLoading } = useProfile();
 
   const [client, setClient] = useState<ClientData | null>(null);
+  const [clientId, setClientId] = useState<string>("");
   const [engagements, setEngagements] = useState<EngagementData[]>([]);
   const [checklistItems, setChecklistItems] = useState<ChecklistItemData[]>([]);
   const [documents, setDocuments] = useState<DocumentData[]>([]);
@@ -140,21 +141,23 @@ export default function ClientPortalPage() {
       } = await supabase.auth.getUser();
 
       if (!user) {
+        setError("Not authenticated");
+        setLoading(false);
         router.push("/login");
         return;
       }
 
       // Query profile to obtain client_id securely
-      const { data: userProfile } = await supabase
+      const { data: profile } = await supabase
         .from("profiles")
-        .select("*")
+        .select("client_id, role, full_name")
         .eq("id", user.id)
         .maybeSingle();
 
-      let targetClientId = userProfile?.client_id;
+      let targetClientId = profile?.client_id;
 
       // If user is firm admin previewing portal, resolve first available client
-      if (!targetClientId) {
+      if (!targetClientId && profile?.role !== "client") {
         const { data: firstClient } = await supabase
           .from("clients")
           .select("id")
@@ -166,14 +169,16 @@ export default function ClientPortalPage() {
       }
 
       if (!targetClientId) {
-        setError("No client account associated with this login.");
+        setError("No client profile found for this account.");
         setLoading(false);
         return;
       }
 
+      setClientId(targetClientId);
+
       // Fetch all client data filtered strictly by targetClientId
       const [clientRes, engRes, docRes, invRes, notesRes] = await Promise.all([
-        supabase.from("clients").select("*").eq("id", targetClientId).single(),
+        supabase.from("clients").select("*").eq("id", targetClientId).maybeSingle(),
         supabase.from("engagements").select("*").eq("client_id", targetClientId),
         supabase.from("documents").select("*").eq("client_id", targetClientId),
         supabase.from("invoices").select("*").eq("client_id", targetClientId),
@@ -181,6 +186,11 @@ export default function ClientPortalPage() {
       ]);
 
       if (clientRes.error) throw clientRes.error;
+      if (!clientRes.data) {
+        setError("Client record not found in the vault. Please verify your account setup with your CA firm.");
+        setLoading(false);
+        return;
+      }
 
       setClient(clientRes.data);
       setEngagements(engRes.data ?? []);
@@ -750,7 +760,7 @@ export default function ClientPortalPage() {
         <PortalDocumentUpload
           open={uploadOpen}
           onOpenChange={setUploadOpen}
-          clientId={client.id}
+          clientId={clientId || client.id}
           engagementId={targetEngagementId}
           checklistItemId={targetChecklistId}
           checklistItemTitle={targetChecklistTitle}

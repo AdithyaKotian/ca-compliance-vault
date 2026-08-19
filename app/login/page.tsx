@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -13,7 +12,6 @@ import { ShieldCheck, Loader2 } from "lucide-react";
 type RoleSelection = "admin" | "client";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<RoleSelection>("admin");
@@ -59,12 +57,10 @@ export default function LoginPage() {
 
       if (profileRole === "client" || role === "client") {
         toast.success("Welcome back! Redirecting to client portal...");
-        router.push("/client-portal");
-        router.refresh();
+        window.location.href = "/client-portal";
       } else {
         toast.success("Welcome back! Redirecting to dashboard...");
-        router.push("/dashboard");
-        router.refresh();
+        window.location.href = "/dashboard";
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Login failed";
